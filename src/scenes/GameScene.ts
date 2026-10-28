@@ -1,0 +1,349 @@
+import Phaser from 'phaser';
+import { AudioManager } from '../audio/AudioManager';
+import { EventBus } from '../core/EventBus';
+import { GameState } from '../core/GameState';
+import { randomSeed } from '../core/SeededRNG';
+import type { AreaId, AreaTransition, GridPos } from '../core/types';
+import { AREAS, type AreaDef } from '../data/areas';
+import { S } from '../data/strings';
+import { Enemy } from '../entities/Enemy';
+import type { Entity } from '../entities/Entity';
+import { Npc } from '../entities/Npc';
+import { Player } from '../entities/Player';
+import type { Intent } from '../input/intents';
+import { InputController } from '../input/InputController';
+import { findPath, nearestWalkable } from '../iso/pathfinding';
+import { gridToWorld } from '../iso/iso';
+import { VfxManager } from '../vfx/VfxManager';
+import { buildArea } from '../world/AreaFactory';
+import { Darkness, LIGHT_PROPS, type StaticLight } from '../world/Darkness';
+import type { Marker, TileMap } from '../world/TileMap';
+import { WorldRenderer } from '../world/WorldRenderer';
+import type { UIScene } from './UIScene';
+
+const WORLD_OF: Record<string, AreaId> = { d1: 'w1', d2: 'w2' };
+
+/**
+ * Hosts one area at a time. Re-entering an area (scene.restart with an AreaTransition)
+ * regenerates it from a fresh seed. The HUD lives in UIScene, launched in parallel.
+ */
+export class GameScene extends Phaser.Scene {
+  tr!: AreaTransition;
+  seed = 0;
+  floor = 0;
+  map!: TileMap;
+  areaDef!: AreaDef;
+  player!: Player;
+  vfx!: VfxManager;
+  enemies: Enemy[] = [];
+  npcs: Npc[] = [];
+  private worldRenderer!: WorldRenderer;
+  private darkness!: Darkness;
+  private inputCtl!: InputController;
+  private interactables: Marker[] = [];
+  private pending: Marker | null = null;
+  private attackTarget: Enemy | null = null;
+  private attackCd = 0;
+  private repath = 0;
+  private leaving = false;
+  private unsub: (() => void)[] = [];
+
+  constructor() { super('Game'); }
+
+  init(data: AreaTransition): void {
+    this.tr = data ?? { areaId: 'town' };
+  }
+
+  create(): void {
+    if (!GameState.hasProfile) { this.scene.start('MainMenu'); return; }
+    this.leaving = false;
+    this.enemies = [];
+    this.npcs = [];
+    this.interactables = [];
+    this.pending = null;
+    this.attackTarget = null;
+
+    const built = buildArea(this.tr);
+    this.map = built.map;
+    this.seed = built.ref.seed;
+    this.floor = built.ref.floor;
+    this.tr = { ...this.tr, seed: this.seed, floor: this.floor };
+    this.areaDef = AREAS[this.tr.areaId];
+    this.vfx = new VfxManager(this);
+
+    this.lockPortals();
+    this.worldRenderer = new WorldRenderer(this, this.map);
+    this.spawnEntities(built.ref.entry);
+
+    this.cameras.main.startFollow(this.player, true, 0.12, 0.12).setRoundPixels(false);
+    this.cameras.main.fadeIn(450);
+
+    const lights: StaticLight[] = [];
+    for (const p of this.map.props) {
+      const r = LIGHT_PROPS[p.key];
+      if (!r) continue;
+      const a = WorldRenderer.propAnchor(p);
+      lights.push({ x: a.x, y: a.y - 30, radius: r });
+    }
+    this.darkness = new Darkness(this, this.areaDef.ambient, lights);
+
+    this.inputCtl = new InputController(this, {
+      pick: (wx, wy) => this.pickEntity(wx, wy),
+      isBlocked: (sx, sy) => this.ui()?.coversPoint(sx, sy) ?? false,
+    });
+    this.inputCtl.onIntent((i) => this.handleIntent(i));
+
+    this.unsub.push(EventBus.on('enemy:died', (e) => {
+      GameState.gainXp(e.xp);
+      const w = gridToWorld(e.gx, e.gy);
+      this.vfx.floatingText(`+${e.xp} XP`, w.x, w.y - 100, { color: '#ffd24a', size: 18 });
+      AudioManager.sfx('enemy_death');
+    }));
+    this.unsub.push(EventBus.on('player:levelup', ({ level }) => {
+      this.vfx.floatingText(`Nivel ${level}`, this.player.x, this.player.y - 150, { color: '#ffe680', size: 30 });
+      this.vfx.burst('star', this.player.x, this.player.y - 60, { count: 30, tint: 0xffe680 });
+    }));
+    if (import.meta.env.DEV) {
+      this.input.keyboard?.on('keydown-F2', () => { GameState.flags.w1BossBeaten = true; GameState.save(); this.vfx.floatingText('DEBUG: Mundo 2 desbloqueado', this.player.x, this.player.y - 150); });
+    }
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanup());
+    if (!this.scene.isActive('UI')) this.scene.launch('UI');
+    this.scene.bringToTop('UI');
+
+    AudioManager.playMusic(this.areaDef.music);
+    GameState.emitVitals();
+    GameState.emitProgress();
+    EventBus.emit('area:entered', { areaId: this.tr.areaId, floor: this.floor, seed: this.seed, name: this.areaLabel() });
+    GameState.save();
+  }
+
+  private areaLabel(): string {
+    const d = this.areaDef;
+    return d.floors ? `${d.name} - Nivel ${this.floor + 1}` : d.name;
+  }
+
+  private ui(): UIScene | undefined {
+    const s = this.scene.get('UI') as UIScene | undefined;
+    return s && s.sys?.isActive() ? s : undefined;
+  }
+
+  private cleanup(): void {
+    this.unsub.forEach((u) => u());
+    this.unsub = [];
+    this.inputCtl?.destroy();
+    this.worldRenderer?.destroy();
+    this.darkness?.destroy();
+  }
+
+  /** W2 portal looks sealed until the W1 gate flag is set. */
+  private lockPortals(): void {
+    if (this.tr.areaId !== 'town' || GameState.flags.w1BossBeaten) return;
+    for (const m of this.map.markersOf('portal')) {
+      if (m.data?.to !== 'w2') continue;
+      const p = this.map.props.find((q) => q.gx === m.gx && q.gy === m.gy);
+      if (p) p.tint = 0x555566;
+    }
+  }
+
+  private spawnEntities(entry: AreaTransition['entry']): void {
+    const m = this.map;
+    let at: GridPos = m.firstMarker('spawn') ?? { gx: 2, gy: 2 };
+    if (entry === 'stairs_up' || entry === 'stairs_down') {
+      const s = m.firstMarker(entry);
+      if (s) at = nearestWalkable(m.isWalkable, { gx: s.gx, gy: s.gy + 1 }) ?? at;
+    }
+    at = nearestWalkable(m.isWalkable, at) ?? at;
+    this.player = new Player(this, at.gx + 0.5, at.gy + 0.5);
+    this.player.onStep = () => AudioManager.sfx(this.areaDef.footstep, { volume: 0.3, pitchVar: 200 });
+
+    for (const mk of m.markers) {
+      if (mk.type === 'npc') this.npcs.push(new Npc(this, String(mk.data?.npcId), mk.gx, mk.gy));
+      else if (mk.type === 'enemy' || mk.type === 'boss') {
+        const d = mk.data ?? {};
+        this.enemies.push(new Enemy(this, {
+          defId: String(d.defId), gx: mk.gx, gy: mk.gy, champion: !!d.champion, affixes: (d.affixes as string[] | undefined) ?? [],
+        }, m.isWalkable));
+      } else if (['portal', 'stairs_down', 'stairs_up', 'waypoint', 'dungeon_entrance', 'chest'].includes(mk.type)) {
+        this.interactables.push(mk);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- input
+
+  private pickEntity(wx: number, wy: number): { id: string; kind: 'enemy' | 'npc' | 'player' } | null {
+    let best: Entity | null = null;
+    let bestD = Infinity;
+    const cands: Entity[] = [...this.enemies.filter((e) => !e.dead), ...this.npcs];
+    for (const e of cands) {
+      const h = e.sprite.displayHeight;
+      const dx = Math.abs(wx - e.x), dy = wy - e.y;
+      if (dx < e.sprite.displayWidth * 0.4 && dy > -h && dy < 20) {
+        const d = Math.abs(dy + h / 2) + dx;
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
+    return best ? { id: best.id, kind: best.kind as 'enemy' | 'npc' } : null;
+  }
+
+  private handleIntent(i: Intent): void {
+    if (this.leaving || this.player.dead) return;
+    switch (i.type) {
+      case 'move': this.onMove(i.gx, i.gy, i.held); break;
+      case 'attack': {
+        const e = this.enemies.find((x) => x.id === i.targetId && !x.dead);
+        if (e) { this.attackTarget = e; this.pending = null; this.repath = 0; }
+        break;
+      }
+      case 'skill': EventBus.emit('skill:use', { slot: i.slot, gx: i.gx, gy: i.gy, targetId: i.targetId }); break;
+      case 'panel': EventBus.emit('ui:togglePanel', { panel: i.panel }); break;
+      case 'closePanels': EventBus.emit('ui:closePanels'); break;
+      case 'menu': EventBus.emit('ui:menu'); break;
+    }
+  }
+
+  private onMove(gx: number, gy: number, held: boolean): void {
+    this.attackTarget = null;
+    this.pending = null;
+    if (!held) {
+      const npc = this.npcs.find((n) => Math.hypot(n.gx - gx, n.gy - gy) < 1.1);
+      if (npc) { this.walkNear(npc.gx, npc.gy); this.pendingNpc = npc; return; }
+      this.pendingNpc = null;
+      const it = this.interactables.find((m) => Math.hypot(m.gx + 0.5 - gx, m.gy + 0.5 - gy) < 1.2);
+      if (it) {
+        this.pending = it;
+        this.walkNear(it.gx + 0.5, it.gy + 0.5);
+        this.tryInteract();
+        return;
+      }
+    }
+    this.walkTo({ gx: Math.floor(gx), gy: Math.floor(gy) });
+  }
+  private pendingNpc: Npc | null = null;
+
+  private walkTo(goal: GridPos): boolean {
+    const m = this.map;
+    const g = nearestWalkable(m.isWalkable, goal, 5);
+    if (!g) return false;
+    const start = { gx: Math.floor(this.player.gx), gy: Math.floor(this.player.gy) };
+    const path = findPath(m.width, m.height, m.isWalkable, start, g);
+    if (!path) return false;
+    this.player.setPath(path);
+    return true;
+  }
+  private walkNear(gx: number, gy: number): void { this.walkTo({ gx: Math.floor(gx), gy: Math.floor(gy) }); }
+
+  private tryInteract(): void {
+    const p = this.player;
+    if (this.pendingNpc && p.distanceTo(this.pendingNpc) < 2.3 && !p.hasPath) {
+      const n = this.pendingNpc;
+      this.pendingNpc = null;
+      this.vfx.floatingText(`${n.def.name}: ${n.nextLine()}`, n.x, n.y - n.sprite.displayHeight - 30, { size: 18, duration: 3200, color: '#f0e0b0' });
+      AudioManager.sfx('ui_open', { volume: 0.5 });
+      EventBus.emit('npc:talk', { npcId: n.def.id });
+      return;
+    }
+    const it = this.pending;
+    if (!it || p.hasPath) return;
+    if (Math.hypot(it.gx + 0.5 - p.gx, it.gy + 0.5 - p.gy) > 2.3) { this.pending = null; return; }
+    this.pending = null;
+    this.activate(it);
+  }
+
+  private say(text: string): void {
+    this.vfx.floatingText(text, this.player.x, this.player.y - 150, { size: 18, duration: 2400 });
+  }
+
+  private activate(m: Marker): void {
+    const id = this.tr.areaId;
+    const runSeed = this.seed;
+    switch (m.type) {
+      case 'portal':
+        if (m.data?.to === 'w2' && !GameState.flags.w1BossBeaten) { this.say(S.interact.portalLocked); return; }
+        this.travelTo({ areaId: m.data?.to as AreaId, entry: 'start' });
+        break;
+      case 'waypoint':
+        this.say(S.interact.waypoint);
+        this.travelTo({ areaId: 'town', entry: 'start' });
+        break;
+      case 'dungeon_entrance':
+        this.travelTo({ areaId: id === 'w1' ? 'd1' : 'd2', floor: 0, seed: randomSeed(), entry: 'start' });
+        break;
+      case 'stairs_down':
+        this.travelTo({ areaId: id, floor: this.floor + 1, seed: runSeed, entry: 'stairs_up' });
+        break;
+      case 'stairs_up':
+        if (this.floor === 0) this.travelTo({ areaId: WORLD_OF[id] ?? 'town', entry: 'start' });
+        else this.travelTo({ areaId: id, floor: this.floor - 1, seed: runSeed, entry: 'stairs_down' });
+        break;
+      case 'chest':
+        this.say('Un cofre... (pronto)');
+        break;
+      default: break;
+    }
+  }
+
+  /** Leave for another area; the next scene regenerates it (fresh seed unless given). */
+  travelTo(t: AreaTransition): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    AudioManager.sfx('portal');
+    EventBus.emit('area:leaving', { areaId: this.tr.areaId });
+    const cam = this.cameras.main;
+    cam.fadeOut(420);
+    cam.once('camerafadeoutcomplete', () => this.scene.restart(t));
+  }
+
+  // ---------------------------------------------------------------- loop
+
+  update(time: number, dtMs: number): void {
+    this.inputCtl.update(time);
+    if (this.vfx.frozen) dtMs = 0;
+    this.updateAttack(time, dtMs);
+    this.player.tick(time, dtMs);
+    for (let n = this.enemies.length - 1; n >= 0; n--) {
+      const e = this.enemies[n];
+      if (!e.active) { this.enemies.splice(n, 1); continue; }
+      e.tickAI(this.player, dtMs);
+      e.tick(time, dtMs);
+    }
+    for (const n of this.npcs) n.tick(time, dtMs);
+    if (!this.player.hasPath && (this.pending || this.pendingNpc)) this.tryInteract();
+
+    this.worldRenderer.update(this.cameras.main);
+    this.darkness.update(time, this.player.x, this.player.y - 50);
+  }
+
+  /** Placeholder melee so the loop is testable. The combat module replaces this. */
+  private updateAttack(time: number, dtMs: number): void {
+    this.attackCd -= dtMs;
+    const t = this.attackTarget;
+    if (!t) return;
+    if (t.dead || !t.active) { this.attackTarget = null; return; }
+    const range = 1.5 + t.radius;
+    if (this.player.distanceTo(t) > range) {
+      this.repath -= dtMs;
+      if (this.repath <= 0) { this.repath = 250; this.walkTo({ gx: Math.floor(t.gx), gy: Math.floor(t.gy) }); }
+      return;
+    }
+    this.player.stop();
+    this.player.faceGrid(t.gx - this.player.gx, t.gy - this.player.gy);
+    if (this.attackCd > 0) return;
+    this.attackCd = 550;
+    const w = gridToWorld(t.gx - this.player.gx, t.gy - this.player.gy);
+    this.player.anim.attackLunge(w.x, w.y);
+    AudioManager.sfx('sword_swing', { volume: 0.7 });
+    this.time.delayedCall(120, () => {
+      if (t.dead || !t.active) return;
+      const dmg = Phaser.Math.Between(8, 14);
+      t.takeDamage(dmg);
+      AudioManager.sfx('sword_hit', { volume: 0.7 });
+      this.vfx.burst('spark', t.x, t.y - 50, { count: 8, tint: 0xffd890 });
+      this.vfx.floatingText(String(dmg), t.x, t.y - t.sprite.displayHeight, { size: 18, color: '#ffffff', duration: 700, rise: 40 });
+      this.vfx.hitStop(40);
+      void time;
+    });
+  }
+}
+
