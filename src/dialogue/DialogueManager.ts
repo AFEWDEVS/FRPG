@@ -112,7 +112,7 @@ class DialogueManagerImpl {
   private onChoice(id: string): void {
     const c = this.cur;
     if (!c) return;
-    if (id === NEXT) { c.i++; this.show(); return; }
+    if (id === NEXT || (id === 'continue' && c.i < c.lines.length - 1)) { c.i++; this.show(); return; }
     let pick: EndChoice | undefined;
     if (id.startsWith('c')) pick = c.opts.choices?.[Number(id.slice(1))];
     this.cur = null;

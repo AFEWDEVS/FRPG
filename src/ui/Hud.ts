@@ -4,6 +4,7 @@ import { BASE_H, BASE_W } from '../constants';
 import { EventBus, type GameEvents } from '../core/EventBus';
 import { GameState, xpForLevel } from '../core/GameState';
 import { SKILL_BY_ID } from '../data/skills';
+import { describeSkill } from '../skills';
 import { itemTooltip } from '../items/format';
 import { BELT_SIZE, useBelt } from '../items/inventory';
 import type { UiHost } from './Panel';
@@ -169,7 +170,7 @@ export class Hud {
     const d = id ? SKILL_BY_ID[id] : null;
     if (!d) return [{ text: idx === 0 ? 'Botón izquierdo del ratón' : idx === 1 ? 'Botón derecho del ratón' : `Tecla ${idx - 1}`, color: COL.dim, size: 13 },
       { text: 'Asigna una habilidad en el árbol (T)', color: COL.dim, size: 12 }];
-    return [{ text: d.name, color: COL.gold, size: 16 }, { text: d.description, size: 13 }, { text: `Maná: ${d.manaCost}`, color: '#7aa8ff', size: 13 }];
+    return [{ text: d.name, color: COL.gold, size: 16 }, { text: describeSkill(d.id), size: 13 }, { text: `Maná: ${d.manaCost}`, color: '#7aa8ff', size: 13 }];
   }
 
   refresh(): void {

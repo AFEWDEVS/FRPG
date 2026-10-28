@@ -75,7 +75,7 @@ export class InputController {
     const g = this.pointerGrid(p);
     const hit = this.opts.pick(p.worldX, p.worldY);
     if (hit && hit.kind === 'enemy') this.emit({ type: 'attack', targetId: hit.id });
-    else this.emit({ type: 'move', gx: g.gx, gy: g.gy, held });
+    else this.emit({ type: 'move', gx: g.gx, gy: g.gy, held, npcId: hit?.kind === 'npc' ? hit.id : undefined });
   }
 
   /** Call every frame (hold-to-move repeats the primary action). */

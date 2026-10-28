@@ -31,7 +31,7 @@ export class DialogueBox {
     const z = scene.add.zone(W / 2, H / 2, W, H).setInteractive();
     z.on('pointerdown', () => { scene.consumeClick(); this.advance(); });
     this.c.addAt(z, 0);
-    scene.input.keyboard?.on('keydown-ENTER', () => { if (this.visible) this.advance(); });
+    scene.input.keyboard?.on('keydown-ENTER', () => { if (this.visible) this.advance(true); });
   }
 
   covers(px: number, py: number): boolean { return this.visible && px >= X && px <= X + W && py >= Y && py <= Y + H; }
@@ -93,9 +93,11 @@ export class DialogueBox {
   }
 
   /** Click / Enter: finish typing, or continue (no choices). */
-  advance(): void {
+  advance(key = false): void {
     if (!this.visible) return;
     if (this.shown < this.full.length) { this.shown = this.full.length; this.textObj.setText(this.full); this.showChoices(); return; }
+    // Enter picks the only choice (Continuar / Cerrar); with several choices the player must click one.
+    if (key && this.choices.length === 1) { const id = this.choices[0].id; this.hide(); EventBus.emit('dialogue:choice', { id }); return; }
     if (!this.choices.length) {
       this.hide();
       EventBus.emit('dialogue:choice', { id: 'continue' });

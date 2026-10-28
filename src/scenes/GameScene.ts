@@ -190,7 +190,7 @@ export class GameScene extends Phaser.Scene {
   private handleIntent(i: Intent): void {
     if (this.leaving || this.player.dead) return;
     switch (i.type) {
-      case 'move': this.onMove(i.gx, i.gy, i.held); break;
+      case 'move': this.onMove(i.gx, i.gy, i.held, i.npcId); break;
       case 'attack': {
         const e = this.enemies.find((x) => x.id === i.targetId && !x.dead);
         if (e) { this.combat.attackTarget(e); this.pending = null; }
@@ -203,12 +203,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private onMove(gx: number, gy: number, held: boolean): void {
+  private onMove(gx: number, gy: number, held: boolean, npcId?: string): void {
     this.combat?.clearTarget();
     this.pending = null;
     if (!held) {
-      const npc = this.npcs.find((n) => Math.hypot(n.gx - gx, n.gy - gy) < 1.1);
-      if (npc) { this.walkNear(npc.gx, npc.gy); this.pendingNpc = npc; return; }
+      const npc = (npcId ? this.npcs.find((n) => n.id === npcId) : undefined) ?? this.npcs.find((n) => Math.hypot(n.gx - gx, n.gy - gy) < 1.1);
+      if (npc) { this.walkNear(npc.gx, npc.gy, 1.5); this.pendingNpc = npc; return; }
       this.pendingNpc = null;
       const it = this.interactables.find((m) => Math.hypot(m.gx + 0.5 - gx, m.gy + 0.5 - gy) < 1.2);
       if (it) {
@@ -222,17 +222,20 @@ export class GameScene extends Phaser.Scene {
   }
   private pendingNpc: Npc | null = null;
 
-  private walkTo(goal: GridPos): boolean {
+  private walkTo(goal: GridPos, stopDist = 0, around?: { gx: number; gy: number }): boolean {
     const m = this.map;
     const g = nearestWalkable(m.isWalkable, goal, 5);
     if (!g) return false;
     const start = { gx: Math.floor(this.player.gx), gy: Math.floor(this.player.gy) };
     const path = findPath(m.width, m.height, m.isWalkable, start, g);
     if (!path) return false;
+    if (around && stopDist > 0) {
+      while (path.length && Math.hypot(path[path.length - 1].gx + 0.5 - around.gx, path[path.length - 1].gy + 0.5 - around.gy) < stopDist) path.pop();
+    }
     this.player.setPath(path);
     return true;
   }
-  private walkNear(gx: number, gy: number): void { this.walkTo({ gx: Math.floor(gx), gy: Math.floor(gy) }); }
+  private walkNear(gx: number, gy: number, stopDist = 0): void { this.walkTo({ gx: Math.floor(gx), gy: Math.floor(gy) }, stopDist, { gx, gy }); }
 
   private tryInteract(): void {
     const p = this.player;
@@ -317,7 +320,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.player.hasPath && (this.pending || this.pendingNpc)) this.tryInteract();
 
     this.loot.update(time, dtMs);
-    this.worldRenderer.update(this.cameras.main);
+    this.worldRenderer.update(this.cameras.main, this.player);
     this.darkness.update(time, this.player.x, this.player.y - 50);
   }
 

@@ -6,7 +6,7 @@ export type PanelId = 'inventory' | 'character' | 'skills' | 'quests' | 'map';
  * Grid coordinates are continuous (see iso/iso.ts).
  */
 export type Intent =
-  | { type: 'move'; gx: number; gy: number; held: boolean }
+  | { type: 'move'; gx: number; gy: number; held: boolean; /** NPC under the cursor (click lands on its body, not its feet). */ npcId?: string }
   | { type: 'attack'; targetId: string }
   | { type: 'skill'; slot: SkillSlot; gx: number; gy: number; targetId?: string }
   | { type: 'panel'; panel: PanelId }

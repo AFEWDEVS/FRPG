@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ISO } from '../constants';
+import { CHAR_SCALE, ISO } from '../constants';
 import { gridToWorld } from '../iso/iso';
 import { ProcAnim } from './ProcAnim';
 
@@ -48,8 +48,8 @@ export abstract class Entity extends Phaser.GameObjects.Container {
     this.gx = o.gx;
     this.gy = o.gy;
     this.radius = o.radius ?? 0.5;
-    const sc = ISO.ART_SCALE * (o.scale ?? 1);
-    this.shadow = scene.add.ellipse(0, 0, 70 * (o.scale ?? 1), 28 * (o.scale ?? 1), 0x000000, 0.4);
+    const sc = ISO.ART_SCALE * CHAR_SCALE * (o.scale ?? 1);
+    this.shadow = scene.add.ellipse(0, 0, 70 * CHAR_SCALE * (o.scale ?? 1), 28 * CHAR_SCALE * (o.scale ?? 1), 0x000000, 0.4);
     this.sprite = scene.add.image(0, 0, o.textureKey).setOrigin(0.5, 1).setScale(sc);
     this.add([this.shadow, this.sprite]);
     this.anim = new ProcAnim(this.sprite, this.shadow, sc);

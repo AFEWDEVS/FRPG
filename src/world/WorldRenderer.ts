@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ISO } from '../constants';
+import { ISO, PROP_SCALE } from '../constants';
 import { cellCenterWorld, GROUND_DEPTH, gridToWorld, worldToGrid } from '../iso/iso';
 import { NO_TILE, type PropInst, type TileMap } from './TileMap';
 
@@ -12,6 +12,7 @@ export class WorldRenderer {
   private propSprites = new Map<PropInst, Img>();
   private propsByCell = new Map<number, PropInst[]>();
   private visible: Img[] = [];
+  private focus?: { x: number; y: number };
 
   constructor(private scene: Phaser.Scene, private map: TileMap) {
     for (const p of map.props) {
@@ -30,7 +31,8 @@ export class WorldRenderer {
 
   spriteFor(p: PropInst): Img | undefined { return this.propSprites.get(p); }
 
-  update(cam: Phaser.Cameras.Scene2D.Camera): void {
+  update(cam: Phaser.Cameras.Scene2D.Camera, focus?: { x: number; y: number }): void {
+    this.focus = focus;
     for (const s of this.visible) s.setVisible(false);
     this.visible.length = 0;
     const v = cam.worldView;
@@ -66,10 +68,18 @@ export class WorldRenderer {
     let s = this.propSprites.get(p);
     if (!s) {
       const a = WorldRenderer.propAnchor(p);
-      s = this.scene.add.image(a.x, a.y, p.key).setOrigin(0.5, 1).setScale(ISO.ART_SCALE * (p.scale ?? 1)).setDepth(a.y);
+      s = this.scene.add.image(a.x, a.y, p.key).setOrigin(0.5, 1).setScale(ISO.ART_SCALE * (PROP_SCALE[p.key] ?? 1) * (p.scale ?? 1)).setDepth(a.y);
       if (p.flipX) s.setFlipX(true);
       if (p.tint !== undefined) s.setTint(p.tint);
       this.propSprites.set(p, s);
+    }
+    const focus = this.focus;
+    if (focus) {
+      // Fade tall props standing in front of the hero so he never disappears behind canopies.
+      const b = s.getBounds();
+      const hide = s.depth > focus.y && s.displayHeight > 90 && focus.x > b.x + b.width * 0.15 && focus.x < b.right - b.width * 0.15 && focus.y - 90 > b.y && focus.y - 90 < b.bottom;
+      const a = hide ? 0.4 : 1;
+      if (s.alpha !== a) s.setAlpha(Phaser.Math.Linear(s.alpha, a, 0.25));
     }
     s.setVisible(true);
     this.visible.push(s);

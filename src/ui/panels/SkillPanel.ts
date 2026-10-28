@@ -6,6 +6,7 @@ import { SKILLS, SKILL_BY_ID, SKILL_TREES, type SkillDef } from '../../data/skil
 import type { TipLine } from '../../items/format';
 import { Panel, type UiHost } from '../Panel';
 import { COL } from '../theme';
+import { cooldownMs, describeSkill, learnSkill, manaCostOf } from '../../skills';
 
 const prereqsOf = (d: SkillDef): string[] => (d as unknown as { prereqs?: string[] }).prereqs ?? [];
 
@@ -24,10 +25,8 @@ export class SkillPanel extends Panel {
   }
 
   private invest(d: SkillDef): void {
-    if (!this.canInvest(d)) return;
+    if (!this.canInvest(d) || !learnSkill(d.id)) return;
     const p = GameState.profile;
-    p.skills[d.id] = this.lvl(d.id) + 1;
-    p.skillPoints--;
     // first point in a skill with an empty hotkey auto-binds it
     const slots = p.skillSlots;
     if (this.lvl(d.id) === 1 && !slots.includes(d.id)) {
@@ -120,8 +119,8 @@ export class SkillPanel extends Panel {
     const l: TipLine[] = [
       { text: d.name, color: COL.gold, size: 17 },
       { text: `Nivel ${lv} / ${d.maxLevel}`, color: '#ffffff' },
-      { text: d.description, color: COL.text, size: 13 },
-      { text: `Coste de maná: ${d.manaCost}`, color: '#7aa8ff', size: 13 },
+      { text: describeSkill(d.id, Math.max(1, lv)), color: COL.text, size: 13 },
+      { text: `Coste de maná: ${manaCostOf(d, Math.max(1, lv))}  -  Recarga: ${(cooldownMs(d, Math.max(1, lv)) / 1000).toFixed(1)}s`, color: '#7aa8ff', size: 13 },
     ];
     const lvlOk = GameState.profile.level >= d.reqLevel;
     l.push({ text: `Requiere nivel ${d.reqLevel}`, color: lvlOk ? '#bbbbbb' : '#ff4040', size: 13 });
@@ -129,7 +128,8 @@ export class SkillPanel extends Panel {
       const ok = this.lvl(q) > 0;
       l.push({ text: `Requiere: ${SKILL_BY_ID[q]?.name ?? q}`, color: ok ? '#bbbbbb' : '#ff4040', size: 13 });
     }
-    if (lv < d.maxLevel) l.push({ text: `Siguiente nivel: ${lv + 1}`, color: '#ffe680', size: 13 });
+    if (lv >= 1 && lv < d.maxLevel) l.push({ text: 'Siguiente nivel: ' + describeSkill(d.id, lv + 1), color: '#ffe680', size: 13 });
+    else if (lv < d.maxLevel) l.push({ text: 'Aprender: 1 punto de habilidad', color: '#ffe680', size: 13 });
     return l;
   }
 }
