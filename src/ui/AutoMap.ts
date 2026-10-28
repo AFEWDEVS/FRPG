@@ -77,7 +77,7 @@ export class AutoMap {
     const g = this.gOverlay.clear();
     const m = this.map;
     if (!m || !game?.player) return;
-    const u = 6, cx = BASE_W / 2, cy = BASE_H / 2 - 40;
+    const u = 14, cx = BASE_W / 2, cy = BASE_H / 2 - 40;
     const px = game.player.gx, py = game.player.gy;
     for (const n of this.list) {
       const i = n % m.width, j = (n / m.width) | 0;

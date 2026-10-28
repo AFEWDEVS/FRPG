@@ -168,6 +168,7 @@ export class Hud {
     if (!GameState.hasProfile) return null;
     const id = GameState.profile.skillSlots[idx];
     const d = id ? SKILL_BY_ID[id] : null;
+    if (id === 'attack') return [{ text: 'Ataque básico', color: COL.gold, size: 16 }, { text: 'Golpea o dispara con tu arma. No cuesta maná.', size: 13 }];
     if (!d) return [{ text: idx === 0 ? 'Botón izquierdo del ratón' : idx === 1 ? 'Botón derecho del ratón' : `Tecla ${idx - 1}`, color: COL.dim, size: 13 },
       { text: 'Asigna una habilidad en el árbol (T)', color: COL.dim, size: 12 }];
     return [{ text: d.name, color: COL.gold, size: 16 }, { text: describeSkill(d.id), size: 13 }, { text: `Maná: ${d.manaCost}`, color: '#7aa8ff', size: 13 }];
@@ -178,7 +179,7 @@ export class Hud {
     const p = GameState.profile;
     this.slots.forEach((sl, i) => {
       const id = p.skillSlots[i];
-      const key = id ? `icon_skill_${id}` : '';
+      const key = id === 'attack' ? `icon_item_${{ knight: 'sword', mage: 'staff', ranger: 'bow' }[p.classId] ?? 'sword'}` : id ? `icon_skill_${id}` : '';
       if (key && this.scene.textures.exists(key)) {
         if (!sl.icon) sl.icon = this.reg(this.scene.add.image(sl.x, sl.y, key).setDepth(12));
         sl.icon.setTexture(key).setDisplaySize(sl.size - 4, sl.size - 4).setVisible(true);
