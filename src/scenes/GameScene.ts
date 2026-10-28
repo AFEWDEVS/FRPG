@@ -7,6 +7,8 @@ import type { AreaId, AreaTransition, GridPos } from '../core/types';
 import { AREAS, type AreaDef } from '../data/areas';
 import { S } from '../data/strings';
 import { Enemy } from '../entities/Enemy';
+import { CombatSystem } from '../combat/CombatSystem';
+import { areaLevel as enemyAreaLevel } from '../data/enemies';
 import type { Entity } from '../entities/Entity';
 import { Npc } from '../entities/Npc';
 import { Player } from '../entities/Player';
@@ -14,7 +16,9 @@ import type { Intent } from '../input/intents';
 import { InputController } from '../input/InputController';
 import { findPath, nearestWalkable } from '../iso/pathfinding';
 import { gridToWorld } from '../iso/iso';
+import { QuestManager } from '../quests/QuestManager';
 import { VfxManager } from '../vfx/VfxManager';
+import { LootManager, monsterLevel } from '../items/LootManager';
 import { buildArea } from '../world/AreaFactory';
 import { Darkness, LIGHT_PROPS, type StaticLight } from '../world/Darkness';
 import type { Marker, TileMap } from '../world/TileMap';
@@ -37,13 +41,13 @@ export class GameScene extends Phaser.Scene {
   vfx!: VfxManager;
   enemies: Enemy[] = [];
   npcs: Npc[] = [];
+  loot!: LootManager;
+  combat!: CombatSystem;
   private worldRenderer!: WorldRenderer;
   private darkness!: Darkness;
   private inputCtl!: InputController;
   private interactables: Marker[] = [];
   private pending: Marker | null = null;
-  private attackTarget: Enemy | null = null;
-  private attackCd = 0;
   private repath = 0;
   private leaving = false;
   private unsub: (() => void)[] = [];
@@ -61,7 +65,6 @@ export class GameScene extends Phaser.Scene {
     this.npcs = [];
     this.interactables = [];
     this.pending = null;
-    this.attackTarget = null;
 
     const built = buildArea(this.tr);
     this.map = built.map;
@@ -70,10 +73,14 @@ export class GameScene extends Phaser.Scene {
     this.tr = { ...this.tr, seed: this.seed, floor: this.floor };
     this.areaDef = AREAS[this.tr.areaId];
     this.vfx = new VfxManager(this);
+    QuestManager.bindScene(this);
 
     this.lockPortals();
     this.worldRenderer = new WorldRenderer(this, this.map);
+    Enemy.areaLevel = enemyAreaLevel(this.tr.areaId, this.floor);
     this.spawnEntities(built.ref.entry);
+    this.loot = new LootManager(this);
+    this.combat = new CombatSystem(this);
 
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12).setRoundPixels(false);
     this.cameras.main.fadeIn(450);
@@ -86,6 +93,7 @@ export class GameScene extends Phaser.Scene {
       lights.push({ x: a.x, y: a.y - 30, radius: r });
     }
     this.darkness = new Darkness(this, this.areaDef.ambient, lights);
+    this.vfx.setDarkness(this.darkness);
 
     this.inputCtl = new InputController(this, {
       pick: (wx, wy) => this.pickEntity(wx, wy),
@@ -93,16 +101,6 @@ export class GameScene extends Phaser.Scene {
     });
     this.inputCtl.onIntent((i) => this.handleIntent(i));
 
-    this.unsub.push(EventBus.on('enemy:died', (e) => {
-      GameState.gainXp(e.xp);
-      const w = gridToWorld(e.gx, e.gy);
-      this.vfx.floatingText(`+${e.xp} XP`, w.x, w.y - 100, { color: '#ffd24a', size: 18 });
-      AudioManager.sfx('enemy_death');
-    }));
-    this.unsub.push(EventBus.on('player:levelup', ({ level }) => {
-      this.vfx.floatingText(`Nivel ${level}`, this.player.x, this.player.y - 150, { color: '#ffe680', size: 30 });
-      this.vfx.burst('star', this.player.x, this.player.y - 60, { count: 30, tint: 0xffe680 });
-    }));
     if (import.meta.env.DEV) {
       this.input.keyboard?.on('keydown-F2', () => { GameState.flags.w1BossBeaten = true; GameState.save(); this.vfx.floatingText('DEBUG: Mundo 2 desbloqueado', this.player.x, this.player.y - 150); });
     }
@@ -132,6 +130,8 @@ export class GameScene extends Phaser.Scene {
     this.unsub.forEach((u) => u());
     this.unsub = [];
     this.inputCtl?.destroy();
+    this.loot?.destroy();
+    this.combat?.destroy();
     this.worldRenderer?.destroy();
     this.darkness?.destroy();
   }
@@ -175,7 +175,7 @@ export class GameScene extends Phaser.Scene {
   private pickEntity(wx: number, wy: number): { id: string; kind: 'enemy' | 'npc' | 'player' } | null {
     let best: Entity | null = null;
     let bestD = Infinity;
-    const cands: Entity[] = [...this.enemies.filter((e) => !e.dead), ...this.npcs];
+    const cands: Entity[] = [...this.enemies.filter((e) => !e.dead && !e.charmed), ...this.npcs];
     for (const e of cands) {
       const h = e.sprite.displayHeight;
       const dx = Math.abs(wx - e.x), dy = wy - e.y;
@@ -193,7 +193,7 @@ export class GameScene extends Phaser.Scene {
       case 'move': this.onMove(i.gx, i.gy, i.held); break;
       case 'attack': {
         const e = this.enemies.find((x) => x.id === i.targetId && !x.dead);
-        if (e) { this.attackTarget = e; this.pending = null; this.repath = 0; }
+        if (e) { this.combat.attackTarget(e); this.pending = null; }
         break;
       }
       case 'skill': EventBus.emit('skill:use', { slot: i.slot, gx: i.gx, gy: i.gy, targetId: i.targetId }); break;
@@ -204,7 +204,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onMove(gx: number, gy: number, held: boolean): void {
-    this.attackTarget = null;
+    this.combat?.clearTarget();
     this.pending = null;
     if (!held) {
       const npc = this.npcs.find((n) => Math.hypot(n.gx - gx, n.gy - gy) < 1.1);
@@ -239,9 +239,10 @@ export class GameScene extends Phaser.Scene {
     if (this.pendingNpc && p.distanceTo(this.pendingNpc) < 2.3 && !p.hasPath) {
       const n = this.pendingNpc;
       this.pendingNpc = null;
-      this.vfx.floatingText(`${n.def.name}: ${n.nextLine()}`, n.x, n.y - n.sprite.displayHeight - 30, { size: 18, duration: 3200, color: '#f0e0b0' });
+      this.player.faceGrid(n.gx - this.player.gx, n.gy - this.player.gy);
       AudioManager.sfx('ui_open', { volume: 0.5 });
       EventBus.emit('npc:talk', { npcId: n.def.id });
+      EventBus.emit('npc:interact', { npcId: n.def.id });
       return;
     }
     const it = this.pending;
@@ -278,10 +279,20 @@ export class GameScene extends Phaser.Scene {
         else this.travelTo({ areaId: id, floor: this.floor - 1, seed: runSeed, entry: 'stairs_down' });
         break;
       case 'chest':
-        this.say('Un cofre... (pronto)');
+        this.openChest(m);
         break;
       default: break;
     }
+  }
+
+  private openChest(m: Marker): void {
+    if (m.data?.opened) return;
+    m.data = { ...(m.data ?? {}), opened: true };
+    this.interactables = this.interactables.filter((x) => x !== m);
+    const p = this.map.props.find((q) => q.key === 'chest_closed' && q.gx === m.gx && q.gy === m.gy);
+    if (p) { p.key = 'chest_open'; this.worldRenderer.spriteFor(p)?.setTexture('chest_open'); }
+    AudioManager.sfx('chest_open');
+    EventBus.emit('chest:opened', { x: m.gx, y: m.gy, level: monsterLevel(this.tr.areaId, this.floor) });
   }
 
   /** Leave for another area; the next scene regenerates it (fresh seed unless given). */
@@ -300,50 +311,14 @@ export class GameScene extends Phaser.Scene {
   update(time: number, dtMs: number): void {
     this.inputCtl.update(time);
     if (this.vfx.frozen) dtMs = 0;
-    this.updateAttack(time, dtMs);
+    this.combat.update(time, dtMs);
     this.player.tick(time, dtMs);
-    for (let n = this.enemies.length - 1; n >= 0; n--) {
-      const e = this.enemies[n];
-      if (!e.active) { this.enemies.splice(n, 1); continue; }
-      e.tickAI(this.player, dtMs);
-      e.tick(time, dtMs);
-    }
     for (const n of this.npcs) n.tick(time, dtMs);
     if (!this.player.hasPath && (this.pending || this.pendingNpc)) this.tryInteract();
 
+    this.loot.update(time, dtMs);
     this.worldRenderer.update(this.cameras.main);
     this.darkness.update(time, this.player.x, this.player.y - 50);
   }
 
-  /** Placeholder melee so the loop is testable. The combat module replaces this. */
-  private updateAttack(time: number, dtMs: number): void {
-    this.attackCd -= dtMs;
-    const t = this.attackTarget;
-    if (!t) return;
-    if (t.dead || !t.active) { this.attackTarget = null; return; }
-    const range = 1.5 + t.radius;
-    if (this.player.distanceTo(t) > range) {
-      this.repath -= dtMs;
-      if (this.repath <= 0) { this.repath = 250; this.walkTo({ gx: Math.floor(t.gx), gy: Math.floor(t.gy) }); }
-      return;
-    }
-    this.player.stop();
-    this.player.faceGrid(t.gx - this.player.gx, t.gy - this.player.gy);
-    if (this.attackCd > 0) return;
-    this.attackCd = 550;
-    const w = gridToWorld(t.gx - this.player.gx, t.gy - this.player.gy);
-    this.player.anim.attackLunge(w.x, w.y);
-    AudioManager.sfx('sword_swing', { volume: 0.7 });
-    this.time.delayedCall(120, () => {
-      if (t.dead || !t.active) return;
-      const dmg = Phaser.Math.Between(8, 14);
-      t.takeDamage(dmg);
-      AudioManager.sfx('sword_hit', { volume: 0.7 });
-      this.vfx.burst('spark', t.x, t.y - 50, { count: 8, tint: 0xffd890 });
-      this.vfx.floatingText(String(dmg), t.x, t.y - t.sprite.displayHeight, { size: 18, color: '#ffffff', duration: 700, rise: 40 });
-      this.vfx.hitStop(40);
-      void time;
-    });
-  }
 }
-

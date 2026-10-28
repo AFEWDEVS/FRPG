@@ -6,6 +6,9 @@ import { MainMenuScene } from './scenes/MainMenuScene';
 import { CharacterCreateScene } from './scenes/CharacterCreateScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
+import { IntroScene } from './scenes/IntroScene';
+import { EndingScene } from './scenes/EndingScene';
+import { CreditsScene } from './scenes/CreditsScene';
 
 export { BASE_W, BASE_H, ISO } from './constants';
 
@@ -25,6 +28,6 @@ export function createGameConfig(): Phaser.Types.Core.GameConfig {
     },
     dom: { createContainer: true },
     input: { mouse: { preventDefaultWheel: true }, touch: { capture: true } },
-    scene: [BootScene, PreloadScene, MainMenuScene, CharacterCreateScene, GameScene, UIScene],
+    scene: [BootScene, PreloadScene, MainMenuScene, CharacterCreateScene, GameScene, UIScene, IntroScene, EndingScene, CreditsScene],
   };
 }

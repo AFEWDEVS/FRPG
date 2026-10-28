@@ -13,7 +13,12 @@ export interface GameEvents {
   'player:moved': { gx: number; gy: number };
   'enemy:spawned': { id: string; defId: string };
   'enemy:damaged': { id: string; amount: number; hp: number };
-  'enemy:died': { id: string; defId: string; gx: number; gy: number; xp: number; champion: boolean };
+  /** gx/gy are grid coords, x/y world px (feet). `enemy` is the live Enemy entity (typed loosely to avoid an import cycle). */
+  'enemy:died': { id: string; defId: string; gx: number; gy: number; xp: number; champion: boolean; enemy?: unknown; x?: number; y?: number; level?: number; isChampion?: boolean; isBoss?: boolean };
+  'skill:failed': { skillId: string; reason: 'mana' | 'cooldown' };
+  'skill:learned': { skillId: string; level: number };
+  'player:respawn': { goldLost: number };
+  'player:damaged': { amount: number; type: string; life: number };
   'boss:defeated': { bossId: string };
   'npc:talk': { npcId: string };
   'quest:update': { questId: string };
@@ -23,6 +28,25 @@ export interface GameEvents {
   'skill:use': { slot: 'left' | 'right' | 1 | 2 | 3 | 4 | 5 | 6; gx: number; gy: number; targetId?: string };
   'game:newGame': { name: string; classId: ClassId };
   'settings:changed': undefined;
+  'dialogue:show': { speaker: string; portrait: string; text: string; choices?: { id: string; text: string }[] };
+  'dialogue:choice': { id: string };
+  'dialogue:hide': undefined;
+  'quests:updated': { id: string; title: string; description: string; steps: { text: string; done: boolean }[]; done: boolean }[];
+  'ui:toast': { text: string; color?: string };
+  'npc:interact': { npcId: string };
+  'xp:grant': { amount: number };
+  // --- UI / items module ---
+  'equipment:changed': undefined;
+  'inventory:changed': undefined;
+  'stats:changed': undefined;
+  'skills:changed': undefined;
+  'skill:cooldown': { skillId: string; remaining: number; total: number };
+  'chest:opened': { x: number; y: number; level: number };
+  'loot:drop': { item: import('../items/types').Item; gx: number; gy: number };
+  'boss:engaged': { bossId: string; name: string; hp?: number; maxHp?: number };
+  'boss:hp': { bossId?: string; hp: number; maxHp: number };
+  'boss:taunt': { bossId?: string; text: string };
+  'quest:item': { questId: string; itemKey: string; name: string };
 }
 
 type Key = keyof GameEvents;

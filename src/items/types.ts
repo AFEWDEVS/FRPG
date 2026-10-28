@@ -1,0 +1,4 @@
+export type Rarity = 'normal'|'magic'|'rare'|'unique'|'quest';
+export type EquipSlot = 'weapon'|'offhand'|'helm'|'armor'|'gloves'|'boots'|'belt'|'ring1'|'ring2'|'amulet';
+export type StatModKey = 'damageMin'|'damageMax'|'damagePct'|'armor'|'life'|'mana'|'str'|'dex'|'vit'|'ene'|'attackSpeed'|'castSpeed'|'moveSpeed'|'fireRes'|'coldRes'|'lightRes'|'lifeSteal'|'manaRegen'|'lifeRegen'|'critChance'|'magicFind'|'goldFind'|'allSkills';
+export interface Item { uid: string; baseId: string; name: string; rarity: Rarity; type: string; slot?: EquipSlot | 'potion' | 'quest'; icon: string; w: number; h: number; ilvl: number; reqLevel: number; mods: Partial<Record<StatModKey, number>>; damage?: [number, number]; armor?: number; twoHanded?: boolean; questId?: string; potion?: 'health'|'mana'; value: number; }

@@ -1,5 +1,7 @@
+import { computeDerived, type DerivedStats } from '../combat/stats';
 import { CLASSES } from '../data/classes';
-import type { EquipSlot, ItemInstance } from '../data/items';
+import type { EquipSlot, Item } from "../items/types";
+import type { InvEntry } from "../items/inventory";
 import { EventBus } from './EventBus';
 import { SaveManager } from './SaveManager';
 import type { ClassId } from './types';
@@ -19,8 +21,12 @@ export interface PlayerProfile {
   skills: Record<string, number>;
   /** [left, right, hotkey1..hotkey6] skill ids */
   skillSlots: (string | null)[];
-  inventory: ItemInstance[];
-  equipment: Partial<Record<EquipSlot, ItemInstance>>;
+  /** 10x4 grid, multi-cell items stored with their top-left cell. */
+  inventory: InvEntry[];
+  equipment: Partial<Record<EquipSlot, Item>>;
+  /** 4 potion belt slots (one potion each). */
+  belt: (Item | null)[];
+  stash?: InvEntry[];
   potions: { health: number; mana: number };
 }
 
@@ -46,6 +52,8 @@ class GameStateImpl {
   mana = 50;
 
   constructor() {
+    // Generic XP grant (quest rewards etc.).
+    EventBus.on('xp:grant', ({ amount }) => { if (this.profile && amount > 0) this.gainXp(amount); });
     EventBus.on('boss:defeated', ({ bossId }) => {
       if (bossId === 'ogre_poet') this.flags.w1BossBeaten = true;
       if (bossId === 'malvarron') this.flags.gameCompleted = true;
@@ -60,8 +68,8 @@ class GameStateImpl {
     this.profile = {
       name: name.trim() || 'Héroe', classId, level: 1, xp: 0, gold: 0,
       stats: { ...c.baseStats }, statPoints: 0, skillPoints: 0,
-      skills: {}, skillSlots: [c.skillIds[0], null, c.skillIds[0], null, null, null, null, null],
-      inventory: [], equipment: {}, potions: { health: 2, mana: 1 },
+      skills: { [c.skillIds[0]]: 1 }, skillSlots: ['attack', c.skillIds[0], c.skillIds[0], null, null, null, null, null],
+      inventory: [], equipment: {}, belt: [null, null, null, null], potions: { health: 2, mana: 1 },
     };
     this.flags = { w1BossBeaten: false, gameCompleted: false, quests: {} };
     this.life = this.maxLife;
@@ -73,6 +81,10 @@ class GameStateImpl {
     const d = SaveManager.load<SaveData>();
     if (!d) return false;
     this.profile = d.profile;
+    const pr = this.profile;
+    if (!Array.isArray(pr.inventory) || pr.inventory.some((e) => !e || !(e as InvEntry).item)) pr.inventory = [];
+    if (!pr.equipment || Object.values(pr.equipment).some((i) => i && !(i as Item).uid)) pr.equipment = {};
+    if (!Array.isArray(pr.belt)) pr.belt = [null, null, null, null];
     this.flags = d.flags;
     this.life = this.maxLife;
     this.mana = this.maxMana;
@@ -82,14 +94,27 @@ class GameStateImpl {
     if (this.profile) SaveManager.save({ profile: this.profile, flags: this.flags } satisfies SaveData);
   }
 
-  get maxLife(): number {
-    const c = CLASSES[this.profile.classId];
-    return Math.round(40 + this.profile.stats.vit * c.lifePerVit + (this.profile.level - 1) * 6);
+  /** Derived combat stats (class + attributes + equipment). */
+  get derived(): DerivedStats {
+    const p = this.profile;
+    return computeDerived({ classId: p.classId, level: p.level, stats: p.stats, equipment: p.equipment as Record<string, unknown> });
   }
-  get maxMana(): number {
-    const c = CLASSES[this.profile.classId];
-    return Math.round(10 + this.profile.stats.ene * c.manaPerEne + (this.profile.level - 1) * 2);
+  get maxLife(): number { return this.derived.maxLife; }
+  get maxMana(): number { return this.derived.maxMana; }
+
+  // --- shared-contract aliases over `profile` ---
+  get level(): number { return this.profile.level; }
+  get xp(): number { return this.profile.xp; }
+  get attrs(): Stats { return this.profile.stats; }
+  get statPoints(): number { return this.profile.statPoints; }
+  get skillPoints(): number { return this.profile.skillPoints; }
+  get skillLevels(): Record<string, number> { return this.profile.skills; }
+  /** Live view over profile.skillSlots: left ('attack' | skillId), right, six hotkeys. */
+  get hotbar(): { left: string; right: string | null; keys: (string | null)[] } {
+    const s = this.profile.skillSlots;
+    return { left: s[0] ?? 'attack', right: s[1] ?? null, keys: s.slice(2, 8) };
   }
+  get hp(): number { return this.life; }
 
   emitVitals(): void {
     EventBus.emit('player:vitals', { life: this.life, maxLife: this.maxLife, mana: this.mana, maxMana: this.maxMana });

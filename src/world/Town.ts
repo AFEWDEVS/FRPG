@@ -36,6 +36,10 @@ export function buildTown(seed = 0): TileMap {
   prop('barrel', 11, 10);
   prop('crate', 14, 10);
 
+  // Festival de las Dos Lunas: flowers and lanterns (non-blocking decor around the plaza and the roads)
+  for (const [x, y] of [[13, 13], [17, 13], [14, 14], [16, 12], [13, 18], [17, 18], [14, 21], [16, 21], [11, 11], [19, 11], [10, 20], [20, 20], [7, 8], [9, 8], [22, 9], [20, 9], [6, 16], [23, 15], [18, 7], [12, 7]]) prop('flowers', x, y, 1, 1, false);
+  for (const [x, y] of [[13, 6], [17, 6], [13, 9], [17, 9], [12, 14], [18, 14], [12, 22], [18, 22], [25, 12], [25, 15], [6, 10], [10, 8], [20, 8]]) prop('torch', x, y, 1, 1, false);
+  for (const [x, y] of [[13, 24], [17, 24]]) prop('brazier', x, y);
   // Portals
   prop('dungeon_entrance', 15, 2);
   map.addMarker('portal', 15, 2, { to: 'w1', label: 'Bosque de Verdeluna' });

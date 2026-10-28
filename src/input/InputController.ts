@@ -57,6 +57,7 @@ export class InputController {
   private skillAtPointer(slot: SkillSlot): void {
     const p = this.scene.input.activePointer;
     const g = this.pointerGrid(p);
+    if (this.opts.isBlocked?.(p.x, p.y)) return;
     const hit = this.opts.pick(p.worldX, p.worldY);
     this.emit({ type: 'skill', slot, gx: g.gx, gy: g.gy, targetId: hit?.kind === 'enemy' ? hit.id : undefined });
   }

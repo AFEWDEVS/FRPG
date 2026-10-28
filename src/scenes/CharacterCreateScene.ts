@@ -54,7 +54,7 @@ export class CharacterCreateScene extends Phaser.Scene {
   private begin(): void {
     const name = (this.input_?.node as HTMLInputElement | undefined)?.value ?? '';
     GameState.newGame(name, this.selected);
-    this.leave('Game', { areaId: 'town', entry: 'start' });
+    this.leave('Intro', { areaId: 'town', entry: 'start' });
   }
 
   private leave(scene: string, data?: object): void {

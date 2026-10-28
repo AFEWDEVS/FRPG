@@ -10,7 +10,7 @@ export const S = {
   loading: 'Cargando...',
   hud: { life: 'Vida', mana: 'Maná', level: 'Nivel' },
   interact: {
-    portalLocked: 'El portal está sellado. Necesitas vencer al Ogro Poeta primero.',
+    portalLocked: 'El portal al Mundo 2 está sellado por un hechizo de celos... Solo se abrirá cuando el Ogro Poeta de las Cuevas del Suspiro deje de rimar.',
     waypoint: 'Los vientos del amor te llevan a casa...',
     noEntry: 'No puedes pasar por ahí.',
   },

@@ -3,145 +3,355 @@ import { AudioManager } from '../audio/AudioManager';
 import { BASE_H, BASE_W } from '../constants';
 import { EventBus, type GameEvents } from '../core/EventBus';
 import { GameState } from '../core/GameState';
-import { SKILL_BY_ID } from '../data/skills';
+import { NPCS } from '../data/npcs';
 import { S } from '../data/strings';
-import { makeButton, textStyle } from '../ui/widgets';
+import { worldToGrid } from '../iso/iso';
+import { BELT_SIZE, addItem, dropOnGround } from '../items/inventory';
+import type { Item } from '../items/types';
+import { AutoMap, type GameLike } from '../ui/AutoMap';
+import { BossBar } from '../ui/BossBar';
+import { DialogueBox } from '../ui/DialogueBox';
+import { Hud } from '../ui/Hud';
+import { Panel, type UiHost } from '../ui/Panel';
+import { CharacterPanel } from '../ui/panels/CharacterPanel';
+import { InventoryPanel } from '../ui/panels/InventoryPanel';
+import { MapPanel } from '../ui/panels/MapPanel';
+import { QuestPanel } from '../ui/panels/QuestPanel';
+import { ShopPanel } from '../ui/panels/ShopPanel';
+import { SkillPanel } from '../ui/panels/SkillPanel';
+import { CELL, itemIcon } from '../ui/theme';
+import { Toasts } from '../ui/Toasts';
+import { Tooltip } from '../ui/Tooltip';
+import { makeButton } from '../ui/widgets';
+import { useBelt } from '../items/inventory';
+import { RARITY_HEX } from '../data/items';
 
 type PanelId = GameEvents['ui:togglePanel']['panel'];
 
+let instance: UIScene | null = null;
+/** Open the merchant panel (hero must be in a running UI scene). */
+export function openShop(): void { instance?.openShop(); }
+
+const GREETINGS: Record<string, string[]> = {
+  merchant: ['¡Pasa, pasa! Pociones para el corazón y la espada. Para el corazón no tengo, pero ánimo.', 'Todo a buen precio... según mi humor de hoy.'],
+  healer: ['Tienes cara de haber peleado con un oso... o con una suegra.', 'Que la luz de las dos lunas cierre esas heridas.'],
+};
+
 /**
- * HUD overlay running in parallel above GameScene. This is the stub: orbs, XP bar, hotbar, area name,
- * placeholder panels and the Esc menu. UI agents replace panels by registering into `panels`.
- *
- * Hook points for later modules:
- *  - React to EventBus ('player:vitals', 'player:xp', 'player:gold', 'area:entered', 'ui:togglePanel').
- *  - Call `coversPoint` registrations via `addBlocker` so clicks on UI don't walk the hero.
+ * HUD overlay running in parallel above GameScene: bottom bar, panels (inventory, character, skills, quests, map, shop),
+ * dialogue box, boss bar, toasts, automap overlay and the Esc menu.
  */
-export class UIScene extends Phaser.Scene {
-  private orbs: { life: Phaser.GameObjects.Image; mana: Phaser.GameObjects.Image } | null = null;
-  private lifeText!: Phaser.GameObjects.Text;
-  private manaText!: Phaser.GameObjects.Text;
-  private xpBar!: Phaser.GameObjects.Graphics;
-  private info!: Phaser.GameObjects.Text;
+export class UIScene extends Phaser.Scene implements UiHost {
+  held: Item | null = null;
+  tooltip!: Tooltip;
+  private hud!: Hud;
+  private automap!: AutoMap;
+  private panels!: Record<PanelId | 'shop', Panel>;
+  private dialogue!: DialogueBox;
+  private boss!: BossBar;
+  private toasts!: Toasts;
+  private heldC!: Phaser.GameObjects.Container;
   private areaText!: Phaser.GameObjects.Text;
-  private panel?: Phaser.GameObjects.Container;
-  private panelId?: PanelId;
   private menu?: Phaser.GameObjects.Container;
-  private vit = { life: 1, maxLife: 1, mana: 1, maxMana: 1 };
-  private xp = { level: 1, xp: 0, xpNext: 1 };
   private blockers: ((x: number, y: number) => boolean)[] = [];
   private unsub: (() => void)[] = [];
+  private consumedAt = -1000;
+  private press: { x: number; y: number; hadHeld: boolean } | null = null;
+  private keys: Phaser.Input.Keyboard.Key[] = [];
 
   constructor() { super('UI'); }
 
-  /** Register a predicate telling GameScene input that a screen point is over UI. */
+  // ------------------------------------------------------------ public API
+
   addBlocker(fn: (x: number, y: number) => boolean): void { this.blockers.push(fn); }
 
   coversPoint(x: number, y: number): boolean {
-    if (y > BASE_H - 120) return true;
     if (this.menu) return true;
-    if (this.panel && x > BASE_W / 2 - 250 && x < BASE_W / 2 + 250 && y > 60 && y < 600) return true;
+    if (this.held) return true;
+    if (performance.now() - this.consumedAt < 80) return true;
+    if (this.hud?.covers(x, y)) return true;
+    if (this.dialogue?.covers(x, y)) return true;
+    if (this.panels && Object.values(this.panels).some((p) => p.contains(x, y))) return true;
     return this.blockers.some((b) => b(x, y));
   }
 
+  consumeClick(): void { this.consumedAt = performance.now(); }
+  pointerPos(): { x: number; y: number } { const p = this.input.activePointer; return { x: p.x, y: p.y }; }
+  shopIsOpen(): boolean { return !!this.panels?.shop.isOpen; }
+
+  openShop(): void {
+    this.closeSide('left', this.panels.shop);
+    (this.panels.shop as ShopPanel).openShop();
+    if (!this.panels.inventory.isOpen) this.panels.inventory.open();
+  }
+
+  setHeld(item: Item | null): void {
+    this.held = item;
+    this.heldC.removeAll(true);
+    if (item) {
+      const w = item.w * CELL, h = item.h * CELL;
+      const g = this.add.graphics();
+      g.fillStyle(RARITY_HEX[item.rarity], 0.35).fillRect(-w / 2, -h / 2, w, h).lineStyle(2, RARITY_HEX[item.rarity], 1).strokeRect(-w / 2, -h / 2, w, h);
+      this.heldC.add([g, itemIcon(this, item, 0, 0, w, h)]);
+      this.heldC.setVisible(true);
+      const p = this.input.activePointer;
+      this.heldC.setPosition(p.x, p.y);
+    } else this.heldC.setVisible(false);
+    this.tooltip.hide();
+    this.updateHover();
+  }
+
+  // ------------------------------------------------------------ lifecycle
+
   create(): void {
-    this.drawHud();
-    const on = <K extends keyof GameEvents>(e: K, fn: (p: GameEvents[K]) => void) => this.unsub.push(EventBus.on(e, fn));
-    on('player:vitals', (v) => { this.vit = v; this.refreshOrbs(); });
-    on('player:xp', (v) => { this.xp = v; this.refreshXp(); });
-    on('player:gold', () => this.refreshInfo());
-    on('area:entered', (a) => { this.areaText.setText(a.name); this.refreshInfo(); this.closePanel(); });
-    on('ui:togglePanel', ({ panel }) => this.togglePanel(panel));
-    on('ui:closePanels', () => { this.closePanel(); this.closeMenu(); });
-    on('ui:menu', () => (this.menu ? this.closeMenu() : this.openMenu()));
-    on('player:levelup', ({ level }) => { AudioManager.sfx('levelup'); this.areaText.setText(`${S.hud.level} ${level}`); });
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.unsub.forEach((u) => u()));
-    if (GameState.hasProfile) { GameState.emitVitals(); GameState.emitProgress(); }
-  }
-
-  private drawHud(): void {
-    const g = this.add.graphics();
-    g.fillStyle(0x0c0806, 0.92).fillRect(0, BASE_H - 110, BASE_W, 110);
-    g.lineStyle(3, 0x6a5a40).lineBetween(0, BASE_H - 110, BASE_W, BASE_H - 110);
-    const mk = (key: string, x: number) => {
-      const img = this.add.image(x, BASE_H - 62, key);
-      img.setDisplaySize(100, 100);
-      return img;
+    instance = this;
+    this.held = null;
+    this.menu = undefined;
+    this.unsub = [];
+    this.keys = [];
+    this.tooltip = new Tooltip(this);
+    this.hud = new Hud(this);
+    this.automap = new AutoMap(this);
+    this.panels = {
+      inventory: new InventoryPanel(this), character: new CharacterPanel(this), skills: new SkillPanel(this),
+      quests: new QuestPanel(this), map: new MapPanel(this, this.automap, () => this.game3()), shop: new ShopPanel(this),
     };
-    const life = mk('ui_orb_health', 110), mana = mk('ui_orb_mana', BASE_W - 110);
-    this.orbs = { life, mana };
-    this.add.image(110, BASE_H - 62, 'ui_orb_frame').setDisplaySize(112, 112);
-    this.add.image(BASE_W - 110, BASE_H - 62, 'ui_orb_frame').setDisplaySize(112, 112);
-    this.lifeText = this.add.text(110, BASE_H - 62, '', textStyle(16, '#fff')).setOrigin(0.5);
-    this.manaText = this.add.text(BASE_W - 110, BASE_H - 62, '', textStyle(16, '#fff')).setOrigin(0.5);
-    for (let i = 0; i < 8; i++) {
-      const x = BASE_W / 2 - 250 + i * 66 + (i >= 2 ? 0 : 0);
-      this.add.image(x + 33, BASE_H - 44, 'ui_slot').setDisplaySize(58, 58);
-      const sid = GameState.hasProfile ? GameState.profile.skillSlots[i] : null;
-      if (sid && SKILL_BY_ID[sid]) this.add.image(x + 33, BASE_H - 44, `icon_skill_${sid}`).setDisplaySize(52, 52);
-      const label = i === 0 ? 'M1' : i === 1 ? 'M2' : String(i - 1);
-      this.add.text(x + 33, BASE_H - 12, label, textStyle(13)).setOrigin(0.5);
+    this.dialogue = new DialogueBox(this);
+    this.boss = new BossBar(this);
+    this.toasts = new Toasts(this);
+    this.heldC = this.add.container(0, 0).setDepth(20000).setVisible(false);
+    this.areaText = this.add.text(BASE_W / 2, 14, '', { fontFamily: 'Georgia, serif', fontSize: '28px', color: '#d8b060', stroke: '#1a0c08', strokeThickness: 5 }).setOrigin(0.5, 0).setDepth(5);
+
+    const on = <K extends keyof GameEvents>(e: K, fn: (p: GameEvents[K]) => void) => this.unsub.push(EventBus.on(e, fn));
+    on('area:entered', (a) => {
+      this.areaText.setText(a.name);
+      this.closePanels();
+      this.dialogue.hide();
+      (this.panels.map as MapPanel).areaName = a.name;
+      this.returnHeld();
+    });
+    on('ui:togglePanel', ({ panel }) => this.togglePanel(panel));
+    on('ui:closePanels', () => { this.closePanels(); this.closeMenu(); });
+    on('ui:menu', () => {
+      if (this.menu) this.closeMenu();
+      else if (this.held) this.returnHeld();
+      else if (Object.values(this.panels).some((p) => p.isOpen)) this.closePanels();
+      else this.openMenu();
+    });
+    on('player:levelup', ({ level }) => {
+      AudioManager.sfx('levelup');
+      this.toast(`¡Nivel ${level}!`, '#ffe680');
+    });
+    for (const e of ['inventory:changed', 'equipment:changed', 'player:gold', 'stats:changed', 'skills:changed', 'player:xp'] as const) {
+      on(e, () => this.refreshPanels());
     }
-    this.xpBar = this.add.graphics();
-    this.info = this.add.text(BASE_W / 2, BASE_H - 100, '', textStyle(18)).setOrigin(0.5, 1);
-    this.areaText = this.add.text(BASE_W / 2, 16, '', textStyle(28, '#d8b060')).setOrigin(0.5, 0);
-    this.refreshOrbs();
-    this.refreshXp();
+    on('quests:updated', () => this.panels.quests.refresh());
+    on('dialogue:show', (p) => this.dialogue.show(p));
+    on('dialogue:hide', () => this.dialogue.hide());
+    on('dialogue:choice', ({ id }) => this.onChoice(id));
+    on('boss:engaged', ({ name, hp, maxHp }) => { this.boss.engage(name); if (hp !== undefined && maxHp) this.boss.setHp(hp, maxHp); });
+    on('boss:hp', ({ hp, maxHp }) => this.boss.setHp(hp, maxHp));
+    on('boss:defeated', () => this.boss.defeat());
+    on('boss:taunt', ({ text }) => this.boss.say(text));
+    on('ui:toast', ({ text, color }) => this.toast(text, color));
+    on('npc:interact', ({ npcId }) => this.onNpc(npcId));
+
+    this.input.on('pointerdown', this.onDown, this);
+    this.input.on('pointerup', this.onUp, this);
+    this.input.on('pointermove', this.onMove, this);
+    const kb = this.input.keyboard;
+    if (kb) {
+      ['A', 'S', 'D', 'F'].slice(0, BELT_SIZE).forEach((k, i) => {
+        const key = kb.addKey(k, false);
+        key.on('down', () => { if (GameState.hasProfile) useBelt(i); });
+        this.keys.push(key);
+      });
+      const tab = kb.addKey('TAB', true);
+      tab.on('down', () => this.automap.setOverlay(!this.automap.overlayOn));
+      this.keys.push(tab);
+      kb.on('keydown', this.onKey, this);
+    }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.unsub.forEach((u) => u());
+      this.hud.destroy();
+      this.input.off('pointerdown', this.onDown, this);
+      this.input.off('pointerup', this.onUp, this);
+      this.input.off('pointermove', this.onMove, this);
+      kb?.off('keydown', this.onKey, this);
+      this.keys.forEach((k) => { k.removeAllListeners(); kb?.removeKey(k, true); });
+      if (instance === this) instance = null;
+    });
+    if (GameState.hasProfile) { GameState.emitVitals(); GameState.emitProgress(); this.hud.refresh(); }
   }
 
-  private fillOrb(img: Phaser.GameObjects.Image, p: number): void {
-    const f = img.frame;
-    const h = f.height * Phaser.Math.Clamp(p, 0, 1);
-    img.setCrop(0, f.height - h, f.width, h);
+  update(time: number, dtMs: number): void {
+    this.hud.update(dtMs);
+    this.hud.pulse(time);
+    this.dialogue.update(dtMs);
+    this.boss.update(dtMs);
+    if (this.held) { const p = this.input.activePointer; this.heldC.setPosition(p.x, p.y); }
+    const gs = this.game3();
+    const moved = this.automap.update(dtMs, gs);
+    if (moved && this.panels.map.isOpen) this.panels.map.refresh();
   }
 
-  private refreshOrbs(): void {
-    if (!this.orbs) return;
-    this.fillOrb(this.orbs.life, this.vit.life / this.vit.maxLife);
-    this.fillOrb(this.orbs.mana, this.vit.mana / this.vit.maxMana);
-    this.lifeText.setText(`${Math.ceil(this.vit.life)}/${this.vit.maxLife}`);
-    this.manaText.setText(`${Math.ceil(this.vit.mana)}/${this.vit.maxMana}`);
+  private game3(): GameLike | undefined {
+    const g = this.scene.get('Game') as unknown as GameLike & { sys: Phaser.Scenes.Systems };
+    return g?.sys?.isActive() ? g : undefined;
   }
 
-  private refreshXp(): void {
-    const w = 380, x = BASE_W / 2 - w / 2, y = BASE_H - 8;
-    this.xpBar.clear().fillStyle(0x201810).fillRect(x, y - 6, w, 6).fillStyle(0xd8a030).fillRect(x, y - 6, w * Math.min(1, this.xp.xp / this.xp.xpNext), 6);
-    this.refreshInfo();
-  }
-
-  private refreshInfo(): void {
-    if (!GameState.hasProfile) return;
-    const p = GameState.profile;
-    this.info.setText(`${p.name}  -  ${S.hud.level} ${p.level}  -  ${p.gold} oro`);
-  }
+  // ------------------------------------------------------------ panels
 
   private togglePanel(id: PanelId): void {
-    const was = this.panelId;
-    this.closePanel();
-    if (was === id) return;
-    AudioManager.sfx('ui_open');
-    this.panelId = id;
-    const c = this.add.container(BASE_W / 2, BASE_H / 2 - 30);
-    c.add(this.add.rectangle(0, 0, 500, 540, 0x120c0a, 0.96).setStrokeStyle(4, 0x6a5a40));
-    c.add(this.add.text(0, -240, S.panels[id], textStyle(32, '#d8b060')).setOrigin(0.5));
-    c.add(this.add.text(0, 0, '(en construcción)', textStyle(20, '#8a7a60')).setOrigin(0.5));
-    this.panel = c;
+    if (!GameState.hasProfile) return;
+    const p = this.panels[id];
+    if (p.isOpen) { p.close(); return; }
+    this.closeSide(p.side, p);
+    p.open();
   }
 
-  private closePanel(): void {
-    if (this.panel) AudioManager.sfx('ui_close');
-    this.panel?.destroy();
-    this.panel = undefined;
-    this.panelId = undefined;
+  private closeSide(side: 'left' | 'right', except: Panel): void {
+    for (const p of Object.values(this.panels)) if (p !== except && p.side === side && p.isOpen) p.close();
   }
+
+  private closePanels(): void { for (const p of Object.values(this.panels)) p.close(); }
+
+  private refreshPanels(): void {
+    for (const p of Object.values(this.panels)) if (p.isOpen) p.refresh();
+    this.updateHover();
+  }
+
+  private updateHover(): void {
+    const p = this.input.activePointer;
+    let over = false;
+    for (const pn of Object.values(this.panels)) {
+      if (pn.contains(p.x, p.y)) { pn.pointerMove(p.x, p.y); over = true; }
+    }
+    if (!over && this.held) this.tooltip.hide();
+  }
+
+  private returnHeld(): void {
+    const it = this.held;
+    if (!it) return;
+    this.setHeld(null);
+    if (!addItem(it)) { const g = this.game3(); if (g?.player) dropOnGround(it, g.player.gx, g.player.gy); }
+    EventBus.emit('inventory:changed');
+  }
+
+  // ------------------------------------------------------------ input
+
+  private onMove(p: Phaser.Input.Pointer): void {
+    if (this.held) this.heldC.setPosition(p.x, p.y);
+    let over = false;
+    for (const pn of Object.values(this.panels)) {
+      if (pn.contains(p.x, p.y)) { pn.pointerMove(p.x, p.y); over = true; }
+    }
+    if (!over && this.held) this.tooltip.hide();
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    if (e.key >= '1' && e.key <= '6') {
+      const p = this.input.activePointer;
+      for (const pn of Object.values(this.panels)) if (pn.contains(p.x, p.y)) pn.numberKey(Number(e.key), p.x, p.y);
+    }
+  }
+
+  private onDown(p: Phaser.Input.Pointer): void {
+    if (this.menu) return;
+    this.press = { x: p.x, y: p.y, hadHeld: !!this.held };
+    this.clickAt(p.x, p.y, p.rightButtonDown(), false);
+  }
+
+  private onUp(p: Phaser.Input.Pointer): void {
+    const pr = this.press;
+    this.press = null;
+    if (!pr || pr.hadHeld || !this.held || this.menu) return;
+    if (Math.hypot(p.x - pr.x, p.y - pr.y) < 14) return; // plain click: item stays on the cursor
+    this.clickAt(p.x, p.y, false, true);
+  }
+
+  /** Shared by click and drag-release: route a pointer action to panels, belt or the ground. */
+  private clickAt(x: number, y: number, right: boolean, fromDrag: boolean): void {
+    if (this.dialogue.covers(x, y)) return;
+    for (const pn of Object.values(this.panels)) {
+      if (pn.contains(x, y)) {
+        this.consumeClick();
+        pn.pointerDown(x, y, right);
+        this.updateHover();
+        return;
+      }
+    }
+    const bi = this.hud.beltIndexAt(x, y);
+    if (bi >= 0) {
+      this.consumeClick();
+      if (this.held) this.placeInBelt(bi);
+      return;
+    }
+    if (this.hud.covers(x, y)) { this.consumeClick(); return; }
+    if (this.held && !right) {
+      // drop on the ground at the hero's feet
+      const g = this.game3();
+      if (g?.player) {
+        dropOnGround(this.held, g.player.gx, g.player.gy);
+        this.setHeld(null);
+        this.consumeClick();
+        EventBus.emit('inventory:changed');
+      }
+    }
+    void fromDrag;
+  }
+
+  private placeInBelt(i: number): void {
+    const it = this.held;
+    if (!it) return;
+    if (!it.potion) { this.toast('El cinturón solo admite pociones.', '#ff7060'); return; }
+    const p = GameState.profile;
+    const prev = p.belt[i];
+    p.belt[i] = it;
+    this.setHeld(prev);
+    AudioManager.sfx('ui_click');
+    EventBus.emit('inventory:changed');
+  }
+
+  // ------------------------------------------------------------ dialogue / NPC
+
+  private onNpc(npcId: string): void {
+    const n = NPCS[npcId];
+    if (!n || (npcId !== 'merchant' && npcId !== 'healer')) return;
+    const lines = GREETINGS[npcId];
+    const text = lines[Math.floor(Math.random() * lines.length)];
+    this.dialogue.show({
+      speaker: n.name, portrait: n.portraitKey, text,
+      choices: npcId === 'merchant'
+        ? [{ id: 'shop:trade', text: 'Comerciar' }, { id: 'shop:bye', text: 'Adiós' }]
+        : [{ id: 'shop:heal', text: 'Sanar mis heridas' }, { id: 'shop:bye', text: 'Adiós' }],
+    });
+  }
+
+  private onChoice(id: string): void {
+    if (id === 'shop:trade') this.openShop();
+    else if (id === 'shop:heal') {
+      const gs = GameState;
+      gs.life = gs.maxLife;
+      gs.mana = gs.maxMana;
+      gs.emitVitals();
+      AudioManager.sfx('heal');
+      this.toast('Hermana Melisa te sana por completo.', '#80ff80');
+    }
+  }
+
+  toast(text: string, color?: string): void { this.toasts.push(text, color); }
+
+  // ------------------------------------------------------------ menu
 
   private openMenu(): void {
-    const c = this.add.container(BASE_W / 2, BASE_H / 2);
+    const c = this.add.container(BASE_W / 2, BASE_H / 2).setDepth(30000);
     c.add(this.add.rectangle(0, 0, BASE_W, BASE_H, 0x000000, 0.6).setInteractive());
     c.add(makeButton(this, 0, -40, 'Volver al juego', () => this.closeMenu()));
     c.add(makeButton(this, 0, 40, 'Guardar y salir', () => {
       GameState.save();
       this.closeMenu();
+      this.returnHeld();
       EventBus.emit('ui:closePanels');
       const mgr = this.game.scene;
       mgr.stop('Game');
@@ -152,3 +362,6 @@ export class UIScene extends Phaser.Scene {
   }
   private closeMenu(): void { this.menu?.destroy(); this.menu = undefined; }
 }
+
+void S;
+void worldToGrid;

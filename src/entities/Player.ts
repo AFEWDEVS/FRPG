@@ -16,6 +16,12 @@ export class Player extends Entity {
   /** Combat modules set this to freeze movement (casting, stunned). */
   locked = false;
   dead = false;
+  /** Poema del Ogro: movement orders are scrambled until this time (scene time ms). */
+  confusedUntil = 0;
+  /** True while a dash tween is moving the hero. */
+  dashing = false;
+  /** Walkability predicate for confusion jitter / dashes (set by CombatSystem). */
+  walkable?: (i: number, j: number) => boolean;
 
   constructor(scene: Phaser.Scene, gx: number, gy: number) {
     const cls = CLASSES[GameState.profile.classId];
@@ -29,12 +35,41 @@ export class Player extends Entity {
   get hasPath(): boolean { return this.path.length > 0; }
 
   /** Replace the current path (cells excluding start). */
-  setPath(path: GridPos[]): void { this.path = path; }
+  setPath(path: GridPos[]): void {
+    if (this.scene.time.now < this.confusedUntil && path.length) {
+      // confusion: sometimes ignore the order, otherwise stumble through a random neighbour cell first
+      if (Math.random() < 0.35) return;
+      const last = path[path.length - 1];
+      const i = Math.floor(this.gx) + Phaser.Math.Between(-2, 2), j = Math.floor(this.gy) + Phaser.Math.Between(-2, 2);
+      if (!this.walkable || this.walkable(i, j)) path = [{ gx: i, gy: j }, ...path.slice(Math.min(path.length - 1, 1)), last];
+    }
+    this.path = path;
+  }
+
+  /** Smoothly move to a grid point over `ms` (dashes). Returns immediately; `done` runs at the end. */
+  dashTo(gx: number, gy: number, ms: number, done?: () => void, onFrame?: () => void): void {
+    this.path = [];
+    this.dashing = true;
+    const sx = this.gx, sy = this.gy;
+    const proxy = { t: 0 };
+    this.scene.tweens.add({
+      targets: proxy, t: 1, duration: ms, ease: 'Cubic.easeOut',
+      onUpdate: () => { this.gx = sx + (gx - sx) * proxy.t; this.gy = sy + (gy - sy) * proxy.t; this.syncPosition(); onFrame?.(); },
+      onComplete: () => { this.dashing = false; this.gx = gx; this.gy = gy; this.syncPosition(); EventBus.emit('player:moved', { gx, gy }); done?.(); },
+    });
+  }
+
+  /** Instant reposition (teleport). */
+  warp(gx: number, gy: number): void {
+    this.path = [];
+    this.setGrid(gx, gy);
+    EventBus.emit('player:moved', { gx, gy });
+  }
   stop(): void { this.path = []; }
 
   tick(_time: number, dtMs: number): void {
     this.moving = false;
-    if (!this.locked && !this.dead && this.path.length) {
+    if (!this.locked && !this.dead && !this.dashing && this.path.length) {
       let remaining = (this.speed * this.speedMultiplier * dtMs) / 1000;
       while (remaining > 0 && this.path.length) {
         const t = this.path[0];

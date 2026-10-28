@@ -1,24 +1,13 @@
-export type Rarity = 'normal' | 'magic' | 'rare' | 'unique';
-export type EquipSlot = 'weapon' | 'offhand' | 'helm' | 'armor' | 'gloves' | 'boots' | 'belt' | 'ring1' | 'ring2' | 'amulet';
+import type { EquipSlot } from '../items/types';
+
+export type { Rarity, EquipSlot, StatModKey, Item } from '../items/types';
 export const EQUIP_SLOTS: EquipSlot[] = ['weapon', 'offhand', 'helm', 'armor', 'gloves', 'boots', 'belt', 'ring1', 'ring2', 'amulet'];
 
-export type ItemType =
-  | 'sword' | 'axe' | 'mace' | 'staff' | 'wand' | 'bow' | 'shield' | 'helm' | 'armor' | 'gloves'
-  | 'boots' | 'belt' | 'ring' | 'amulet' | 'potion_health' | 'potion_mana' | 'gold'
-  | 'letter_page' | 'rose_bouquet' | 'amulet_quest';
+export const SLOT_LABEL: Record<EquipSlot, string> = {
+  weapon: 'Arma', offhand: 'Mano izquierda', helm: 'Casco', armor: 'Armadura', gloves: 'Guantes',
+  boots: 'Botas', belt: 'Cinturón', ring1: 'Anillo', ring2: 'Anillo', amulet: 'Amuleto',
+};
 
-export interface Affix { id: string; value: number; }
-
-/** A concrete item in the world / inventory / equipment. Generation lives in a later module. */
-export interface ItemInstance {
-  uid: string;
-  type: ItemType;
-  rarity: Rarity;
-  name: string;
-  ilvl: number;
-  reqLevel: number;
-  affixes: Affix[];
-  /** Base values (damage, armor...). */
-  base?: Record<string, number>;
-  quest?: boolean;
-}
+export const RARITY_COLOR = { normal: '#ffffff', magic: '#6969ff', rare: '#ffff64', unique: '#c7b377', quest: '#ff9a28' } as const;
+export const RARITY_HEX = { normal: 0xffffff, magic: 0x6969ff, rare: 0xffff64, unique: 0xc7b377, quest: 0xff9a28 } as const;
+export const RARITY_LABEL = { normal: 'Normal', magic: 'Mágico', rare: 'Raro', unique: 'Único', quest: 'De misión' } as const;
