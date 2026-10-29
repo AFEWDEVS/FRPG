@@ -32,6 +32,11 @@ Documentación de diseño y contratos: [docs/GDD.md](docs/GDD.md).
 | Shift (mantener) | Bloquear; pulsarlo ~150 ms antes del golpe = parada (stagger + camara lenta) |
 | Z (mantener) | Correr (gasta aguante) |
 | Clic der. / 1-6 | Habilidades (cuestan mana y tienen compromiso de lanzamiento) |
+| Rueda del raton | Zoom de camara |
+| I / C / T / Q / M | Inventario / personaje / habilidades / misiones / mapa |
+| A / S / D / F | Pociones del cinturon |
+| Tab | Automapa (mini) |
+| Alt (mantener) | Mostrar etiquetas de objetos y enemigos |
 | Esc | Menu / cerrar paneles |
 
 Aguante: se gasta al esquivar, atacar, cargar, correr y bloquear; se regenera tras una pausa. A 0 = agotado (mas lento, sin esquiva).

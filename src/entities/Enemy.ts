@@ -104,7 +104,7 @@ export class Enemy extends Entity {
     this.level = s.level ?? (BOSS_LEVEL[def.id] ?? Math.max(1, Enemy.areaLevel + (Math.random() < 0.4 ? 1 : 0)));
     const hpMult = def.boss ? 1 + 0.05 * (this.level - 1) : enemyHpMult(this.level);
     // heavy-combat tuning: grunts last 3-5 hits, champions ~10, bosses long
-    this.maxHp = this.hp = Math.round(def.hp * hpMult * (def.boss ? 1.25 : this.champion ? 2.2 * 1.15 : 1.15));
+    this.maxHp = this.hp = Math.round(def.hp * hpMult * (def.boss ? 0.7 : this.champion ? 2.2 * 0.7 : 0.7));
     this.maxPoise = this.poise = Math.round((def.poise ?? 32 + def.hp * 0.18) * (this.champion ? 1.6 : 1));
     this.speedAffix = this.affixes.includes('fast') ? 1.35 : 1;
     this.speed = def.speed * (this.affixes.includes('fast') ? 1.3 : 1);

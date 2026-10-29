@@ -8,7 +8,7 @@ import Phaser from 'phaser';
 
 const W = 256, H = 128, HW = 128, HH = 64;
 const D0 = (HW * HH) / Math.hypot(HW, HH);
-const DEPTH = 46;
+const DEPTH = 62;
 const N = Math.hypot(HH, HW);
 const NORMALS: [number, number][] = [[HH / N, HW / N], [-HH / N, -HW / N], [-HH / N, HW / N], [HH / N, -HW / N]];
 const VERTS: [number, number][] = [[0, HH], [0, -HH], [HW, 0], [-HW, 0]];

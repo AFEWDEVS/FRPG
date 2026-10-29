@@ -43,6 +43,7 @@ export class WorldRenderer {
   private readonly bGroundKey: string;
   private shadows = new Map<object, Img>();
   private scaleCache = new Map<string, number>();
+  private blotches = new Map<number, Img>();
   private camMid = { x: 0, y: 0 };
 
   constructor(private scene: Phaser.Scene, private map: TileMap, private atmo?: AtmoDef) {
@@ -129,6 +130,7 @@ export class WorldRenderer {
         }
         else if (m.ground[n] !== NO_TILE) {
           this.show(this.ground, n, () => this.makeGround(i, j, n));
+          if (!this.wallMass && i % 5 === 0 && j % 5 === 0) this.blotch(i, j);
           const dc = this.decor.get(n);
           if (dc) for (const o of dc) { o.setVisible(true); this.visible.push(o); }
         }
@@ -250,11 +252,39 @@ export class WorldRenderer {
     const c = cellCenterWorld(i, j);
     const key = this.map.groundKeys[this.map.ground[n]];
     const img = this.scene.add.image(c.x, c.y, this.terrain.groundTexture(key)).setDisplaySize(ISO.TILE_W + 2, ISO.TILE_H + 1).setDepth(GROUND_DEPTH);
-    const shade = 225 + ((i * 7 + j * 13) % 5) * 7;
-    img.setTint(Phaser.Display.Color.GetColor(shade, shade, shade));
+    // Break the tile grid: random flips (the diamond is symmetric), per-tile jitter and low-frequency colour drift.
+    const r = hash2(i + 101, j + 57);
+    img.setFlip(r < 0.5, hash2(i + 7, j + 211) < 0.5);
+    const lf = this.lowNoise(i, j), jit = (hash2(i * 5 + 9, j * 3 + 4) - 0.5) * 0.08;
+    const shade = Math.round(Phaser.Math.Clamp(252 * (1 + (lf - 0.5) * 0.22 + jit), 150, 255));
+    const tr = Math.min(255, Math.round(shade * (1 + (lf - 0.5) * 0.10))), tb = Math.min(255, Math.round(shade * (1 - (lf - 0.5) * 0.10)));
+    img.setTint(Phaser.Display.Color.GetColor(tr, shade, tb));
     if (key.includes('water') || key.includes('lava')) this.fluids.set(img, { img, i, j, y0: c.y, lava: key.includes('lava') });
     this.decor.set(n, this.makeDecor(i, j, key, c, shade));
     return img;
+  }
+
+  /** Smooth value noise in 0..1 (features ~7 cells wide). */
+  private lowNoise(i: number, j: number): number {
+    const f = 1 / 7, x = i * f, y = j * f, x0 = Math.floor(x), y0 = Math.floor(y);
+    const u = x - x0, v = y - y0, su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+    const a = hash2(x0, y0), b = hash2(x0 + 1, y0), c = hash2(x0, y0 + 1), d = hash2(x0 + 1, y0 + 1);
+    return a + (b - a) * su + (c - a) * sv + (a - b - c + d) * su * sv;
+  }
+
+  /** Big soft colour blotch laid over the ground so terrain reads as one continuous painted surface. */
+  private blotch(i: number, j: number): void {
+    const k = (j + 1000) * 4096 + i + 1000;
+    let b = this.blotches.get(k);
+    if (!b) {
+      const c = cellCenterWorld(i, j), r = hash2(i + 5, j + 9), r2 = hash2(i + 15, j + 3);
+      const cols = [0x6a7a30, 0x3a5a2a, 0x8a7440, 0x2c4a3c, 0x9a8a3a];
+      const w = 800 + r * 700;
+      b = this.scene.add.image(c.x + (r2 - 0.5) * 300, c.y + (r - 0.5) * 150, 'light_mask').setDisplaySize(w, w * 0.55).setDepth(GROUND_DEPTH + 0.4)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY).setTint(cols[(r * 77 | 0) % cols.length]).setAlpha(0.16 + r2 * 0.14);
+      this.blotches.set(k, b);
+    }
+    b.setVisible(true); this.visible.push(b);
   }
 
   /** Ground type at a cell, or undefined for void/wall. */
@@ -314,7 +344,7 @@ export class WorldRenderer {
     if (liquid) return out;
     const D = this.decals;
     const r0 = hash2(i * 3 + 1, j * 5 + 2), r1 = hash2(i * 7 + 3, j * 11 + 5);
-    if (r0 < (border ? 0.55 : 0.07)) {
+    if (r0 < (border ? 0.55 : 0.15)) {
       let list: string[] | undefined;
       if (fam === 'w1_grass') list = r1 < 0.45 ? D.tuft : r1 < 0.7 ? D.flower : D.pebble;
       else if (fam === 'w1_forest_floor') list = r1 < 0.7 ? D.tuft : D.pebble;
@@ -341,6 +371,8 @@ export class WorldRenderer {
   }
 
   destroy(): void {
+    for (const s of this.blotches.values()) s.destroy();
+    this.blotches.clear();
     for (const s of this.shadows.values()) s.destroy();
     this.shadows.clear();
     for (const s of [...this.ground.values(), ...this.walls.values(), ...this.propSprites.values(), ...this.bGround.values(), ...this.bProps.values()]) s.destroy();
