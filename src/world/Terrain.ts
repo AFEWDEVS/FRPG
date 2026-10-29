@@ -109,14 +109,14 @@ export class Terrain {
     if (!t) return key;
     const ctx = t.getContext() as Ctx;
     const id = ctx.createImageData(W, H), d = id.data, nf = noiseField(variant + 2), n = NORMALS[kind];
-    const s0 = D0 - DEPTH * 0.78;
+    const s0 = D0 - DEPTH * 0.42;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const px = x - HW + 0.5, py = y - HH + 0.5, nz = nf[y * W + x];
       const proj = px * n[0] + py * n[1];
-      const s = proj - s0 + (nz - 0.5) * 16;
-      const band = Math.exp(-(s * s) / (2 * 4.5 * 4.5)) * (0.45 + 0.8 * nz);
+      const s = proj - s0 + (nz - 0.5) * 26;
+      const band = Math.exp(-(s * s) / (2 * 6 * 6)) * (0.2 + 1.1 * nz * nz);
       const edge = sstep((D0 - proj) / 6);
-      const a = Math.min(1, band) * edge * (lava ? 0.85 : 0.75);
+      const a = Math.min(1, band) * edge * (lava ? 0.8 : 0.6);
       const o = (y * W + x) * 4;
       d[o] = lava ? 255 : 250; d[o + 1] = lava ? 150 : 253; d[o + 2] = lava ? 40 : 255; d[o + 3] = a * 255;
     }

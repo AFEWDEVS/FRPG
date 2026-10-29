@@ -91,6 +91,7 @@ class DialogueManagerImpl {
   private cur: (Job & { i: number; frozen?: boolean }) | null = null;
   private pending: Job[] = [];
   private lastCombat = 0;
+  private lastQuip = -1e9;
   private poll: number | undefined;
   private game?: Phaser.Game;
 
@@ -107,7 +108,8 @@ class DialogueManagerImpl {
     EventBus.on('enemy:damaged', () => { this.lastCombat = performance.now(); });
     EventBus.on('area:leaving', () => this.abort());
     EventBus.on('player:levelup', ({ level }) => {
-      if (level < 2) return;
+      if (level < 2 || performance.now() - this.lastQuip < 2500) return; // one quip per burst of level-ups
+      this.lastQuip = performance.now();
       EventBus.emit('ui:toast', { text: `Pipo: "${PIPO_LEVELUP[level % PIPO_LEVELUP.length].replace('{lvl}', String(level))}"`, color: '#9ad0ff' });
     });
   }

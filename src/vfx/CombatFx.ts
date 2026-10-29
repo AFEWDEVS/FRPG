@@ -288,7 +288,7 @@ export class CombatFx {
     const hy = groundY - 62;
     const useAngel = sc.textures.exists('fx_levelup_angel') && sc.anims.exists('levelup_angel');
     if (useAngel) {
-      const ang = sc.add.sprite(x, groundY - 70, 'fx_levelup_angel').setScale(2.1).setDepth(VFX_DEPTH - 4).setAlpha(0);
+      const ang = sc.add.sprite(x, groundY - 70, 'fx_levelup_angel').setScale(2.1).setBlendMode(ADD).setDepth(VFX_DEPTH - 4).setAlpha(0);
       ang.play('levelup_angel');
       sc.tweens.add({ targets: ang, alpha: 1, duration: 200 });
       sc.tweens.add({ targets: ang, y: ang.y - 40, alpha: 0, delay: 1000, duration: 700, onComplete: () => ang.destroy() });

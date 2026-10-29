@@ -190,7 +190,9 @@ export class VfxManager {
     this.emit('sparks', x, y, Math.round(18 * pow), { tint: p.core, scale: 0.22, speed: [100 * k, 380 * k] });
     this.emit('sparks', x, y, Math.round(10 * pow), { tint: p.mid, scale: 0.3, speed: [60 * k, 260 * k], life: 750 });
     if (el === 'fire') this.emit('fire', x, y, Math.round(16 * pow), { tint: p.mid, scale: 0.7 * k, scaleEnd: 0.1, speed: [30 * k, 200 * k], alpha: 0.9 });
-    this.emit('smoke', x, y, Math.round(7 * pow), { tint: el === 'fire' || el === 'physical' ? 0x3a3430 : p.dark, scale: 0.9 * k, scaleEnd: 1.5 * k, alpha: 0.55, life: 1200 });
+    const dirty = el === 'fire' || el === 'physical';
+    // Only fire/physical leave dark smoke; magical elements get a pale puff (dark smoke read as a black blob on holy/ice bursts).
+    this.emit('smoke', x, y, Math.round(dirty ? 7 : 3) * pow | 0, { tint: dirty ? 0x3a3430 : p.core, scale: 0.9 * k, scaleEnd: 1.5 * k, alpha: dirty ? 0.55 : 0.18, life: dirty ? 1200 : 700 });
     if (el === 'holy' || el === 'ice' || el === 'arcane' || el === 'love') this.emit('stars', x, y, Math.round(10 * pow), { tint: p.core, scale: 0.35, speed: [60 * k, 260 * k] });
     this.shockwave(x, y, { element: el, radius: r * 1.5, duration: 420 });
     if (o.decal !== false && (el === 'fire' || el === 'physical' || el === 'arcane')) this.decal('scorch', x, y + 4, { scale: (r / 100) * 0.9 * pow, tint: 0x201410, duration: 4000, alpha: 0.7, blend: 'NORMAL' });
