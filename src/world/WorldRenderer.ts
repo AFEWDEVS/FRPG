@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ISO, PROP_SCALE } from '../constants';
 import { cellCenterWorld, GROUND_DEPTH, gridToWorld, worldToGrid } from '../iso/iso';
+import { CORNER_DIRS, EDGE_DIRS, familyOf, isLiquid, priorityOf, Terrain } from './Terrain';
 import { NO_TILE, type PropInst, type TileMap } from './TileMap';
 
 type Img = Phaser.GameObjects.Image;
@@ -9,6 +10,12 @@ type Img = Phaser.GameObjects.Image;
 const SWAY: Record<string, number> = {
   tree_oak_1: 0.016, tree_oak_2: 0.016, tree_pine: 0.012, bush: 0.035, flowers: 0.06, mushrooms: 0.015, dead_tree: 0.008, banner: 0.05,
 };
+
+/** Cells drawn beyond the playable map so no void is ever visible, even at min zoom. */
+const BORDER = 36;
+const hash2 = (i: number, j: number): number => { let h = (i * 374761393 + j * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const BORDER_PROPS_W1 = ['tree_oak_1', 'tree_oak_2', 'tree_pine', 'tree_pine', 'bush', 'rock_1'];
+const BORDER_PROPS_W2 = ['dead_tree', 'obsidian_spire', 'ruins_pillar', 'lava_rock', 'rock_1', 'crystal'];
 
 interface Fluid { img: Img; i: number; j: number; y0: number; lava: boolean; }
 
@@ -23,8 +30,23 @@ export class WorldRenderer {
   private visFluids: Fluid[] = [];
   private visSway: { s: Img; p: PropInst; amp: number }[] = [];
   private focus?: { x: number; y: number };
+  private terrain: Terrain;
+  private decor = new Map<number, Img[]>();
+  private decals: Record<string, string[]>;
+  private bGround = new Map<number, Img>();
+  private bProps = new Map<number, Img>();
+  private readonly wallMass: boolean;
+  private readonly bProto: string[];
+  private readonly bGroundKey: string;
 
   constructor(private scene: Phaser.Scene, private map: TileMap) {
+    this.terrain = new Terrain(scene);
+    this.decals = this.terrain.decalKeys();
+    this.prebake();
+    this.wallMass = !!map.wallKey && !map.wallKey.startsWith('town');
+    const g0 = map.groundKeys.find((k) => !k.includes('water') && !k.includes('lava')) ?? map.groundKeys[0];
+    this.bGroundKey = g0;
+    this.bProto = g0.startsWith('w2') ? BORDER_PROPS_W2 : BORDER_PROPS_W1;
     for (const p of map.props) {
       const n = map.idx(Math.min(p.gx + p.w - 1, map.width - 1), Math.min(p.gy + p.h - 1, map.height - 1));
       const arr = this.propsByCell.get(n);
@@ -55,22 +77,72 @@ export class WorldRenderer {
       worldToGrid(rl, rt), worldToGrid(rr, rt), worldToGrid(rl, rb), worldToGrid(rr, rb),
     ];
     const m = this.map;
-    const i0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.gx))));
-    const i1 = Math.min(m.width - 1, Math.ceil(Math.max(...corners.map((c) => c.gx))));
-    const j0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.gy))));
-    const j1 = Math.min(m.height - 1, Math.ceil(Math.max(...corners.map((c) => c.gy))));
+    const i0 = Math.max(-BORDER, Math.floor(Math.min(...corners.map((c) => c.gx))));
+    const i1 = Math.min(m.width - 1 + BORDER, Math.ceil(Math.max(...corners.map((c) => c.gx))));
+    const j0 = Math.max(-BORDER, Math.floor(Math.min(...corners.map((c) => c.gy))));
+    const j1 = Math.min(m.height - 1 + BORDER, Math.ceil(Math.max(...corners.map((c) => c.gy))));
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
         const cx = (i - j) * (ISO.TILE_W / 2), cy = (i + j + 1) * (ISO.TILE_H / 2);
         if (cx < rl || cx > rr || cy < rt || cy > rb) continue;
+        if (i < 0 || j < 0 || i >= m.width || j >= m.height) { this.showBorder(i, j); continue; }
         const n = m.idx(i, j);
         if (m.wall[n]) this.show(this.walls, n, () => this.makeWall(i, j));
-        else if (m.ground[n] !== NO_TILE) this.show(this.ground, n, () => this.makeGround(i, j, n));
+        else if (m.ground[n] !== NO_TILE) {
+          this.show(this.ground, n, () => this.makeGround(i, j, n));
+          const dc = this.decor.get(n);
+          if (dc) for (const o of dc) { o.setVisible(true); this.visible.push(o); }
+        }
+        else if (this.wallMass) this.showBorder(i, j); // solid rock between dungeon rooms instead of black void
         const props = this.propsByCell.get(n);
         if (props) for (const p of props) this.showProp(p);
       }
     }
     this.animate(this.scene.time.now);
+  }
+
+  /** Themed filler outside the map: ground + dense trees/rocks (overworld) or a solid wall mass (dungeon), fading to dark with distance. */
+  private showBorder(i: number, j: number): void {
+    const m = this.map;
+    const inMap = i >= 0 && j >= 0 && i < m.width && j < m.height;
+    const d = Math.max(1, -i, -j, i - m.width + 1, j - m.height + 1); // cells beyond the edge (>=1)
+    const k = (j + BORDER) * (m.width + 2 * BORDER) + (i + BORDER);
+    const fog = Math.max(0.28, 1 - d / (BORDER * 0.9));
+    let g = inMap ? undefined : this.bGround.get(k);
+    if (!inMap && !g) {
+      const c = cellCenterWorld(i, j);
+      g = this.scene.add.image(c.x, c.y, this.bGroundKey).setDisplaySize(ISO.TILE_W + 2, ISO.TILE_H + 1).setDepth(GROUND_DEPTH);
+      const sh = Math.round(255 * fog * (this.wallMass ? 0.6 : 0.85));
+      g.setTint(Phaser.Display.Color.GetColor(sh, sh, sh));
+      this.bGround.set(k, g);
+    }
+    if (g) { g.setVisible(true); this.visible.push(g); }
+    const r = hash2(i, j);
+    if (this.wallMass) {
+      let w = this.bProps.get(k);
+      if (!w) {
+        const c = cellCenterWorld(i, j), y = c.y + ISO.TILE_H / 2;
+        w = this.scene.add.image(c.x, y, m.wallKey).setOrigin(0.5, 1).setScale(ISO.ART_SCALE).setDepth(y);
+        const sh = Math.round(255 * Math.max(0.2, fog * 0.8));
+        w.setTint(Phaser.Display.Color.GetColor(sh, sh, sh));
+        this.bProps.set(k, w);
+      }
+      w.setVisible(true); this.visible.push(w);
+      return;
+    }
+    if (r > 0.72 && d > 3) return; // a few clearings far out
+    let s = this.bProps.get(k);
+    if (!s) {
+      const key = d <= 2 ? this.bProto[(r * 3) | 0] : this.bProto[(r * this.bProto.length) | 0];
+      const a = WorldRenderer.propAnchor({ key, gx: i, gy: j, w: 1, h: 1, blocks: true });
+      s = this.scene.add.image(a.x + (hash2(j, i) - 0.5) * 30, a.y, key).setOrigin(0.5, 1)
+        .setScale(ISO.ART_SCALE * (PROP_SCALE[key] ?? 1) * (0.9 + hash2(i + 7, j) * 0.4)).setDepth(a.y);
+      if (hash2(i, j + 3) < 0.5) s.setFlipX(true);
+      const sh = Math.round(255 * Math.max(0.3, fog));
+      s.setTint(Phaser.Display.Color.GetColor(sh, sh, sh));
+      this.bProps.set(k, s);
+    }
+    s.setVisible(true); this.visible.push(s);
   }
 
   private animate(t: number): void {
@@ -127,11 +199,89 @@ export class WorldRenderer {
   private makeGround(i: number, j: number, n: number): Img {
     const c = cellCenterWorld(i, j);
     const key = this.map.groundKeys[this.map.ground[n]];
-    const img = this.scene.add.image(c.x, c.y, key).setDisplaySize(ISO.TILE_W + 2, ISO.TILE_H + 1).setDepth(GROUND_DEPTH);
+    const img = this.scene.add.image(c.x, c.y, this.terrain.groundTexture(key)).setDisplaySize(ISO.TILE_W + 2, ISO.TILE_H + 1).setDepth(GROUND_DEPTH);
     const shade = 225 + ((i * 7 + j * 13) % 5) * 7;
     img.setTint(Phaser.Display.Color.GetColor(shade, shade, shade));
     if (key.includes('water') || key.includes('lava')) this.fluids.set(img, { img, i, j, y0: c.y, lava: key.includes('lava') });
+    this.decor.set(n, this.makeDecor(i, j, key, c, shade));
     return img;
+  }
+
+  /** Ground type at a cell, or undefined for void/wall. */
+  private keyAt(i: number, j: number): string | undefined {
+    const m = this.map;
+    if (!m.inBounds(i, j)) return undefined;
+    const n = m.idx(i, j);
+    return m.ground[n] === NO_TILE ? undefined : m.groundKeys[m.ground[n]];
+  }
+
+  /** Pre-create every masked texture the map can need (canvas work happens once, during the scene fade-in). */
+  private prebake(): void {
+    const keys = this.map.groundKeys, T = this.terrain;
+    for (const k of keys) T.groundTexture(k);
+    for (let a = 0; a < keys.length; a++) for (let b = 0; b < keys.length; b++) {
+      if (familyOf(keys[a]) === familyOf(keys[b]) || priorityOf(keys[b]) <= priorityOf(keys[a]) || priorityOf(keys[a]) < 0) continue;
+      for (let kind = 0; kind < 8; kind++) for (let v = 0; v < 2; v++) T.blendKey(familyOf(keys[b]), kind, v);
+    }
+    for (const k of keys) if (isLiquid(k)) for (let kind = 0; kind < 4; kind++) for (let v = 0; v < 2; v++) T.foamKey(kind, v, k.includes('lava'));
+  }
+
+  /** Border blend overlays + scattered decals for one ground cell (static, created once). */
+  private makeDecor(i: number, j: number, key: string, c: { x: number; y: number }, shade: number): Img[] {
+    const out: Img[] = [];
+    const T = this.terrain, sc = this.scene;
+    const pa = priorityOf(key), fam = familyOf(key);
+    if (pa < 0) return out;
+    const tint = Phaser.Display.Color.GetColor(shade, shade, shade);
+    const add = (tex: string, depth: number, tn = tint, x = c.x, y = c.y, size = true): Img => {
+      const im = sc.add.image(x, y, tex).setDepth(depth).setTint(tn);
+      if (size) im.setDisplaySize(ISO.TILE_W + 2, ISO.TILE_H + 1);
+      out.push(im);
+      return im;
+    };
+    const v = hash2(i, j + 11) < 0.5 ? 0 : 1;
+    const liquid = isLiquid(key), lava = key.includes('lava');
+    let border = false;
+    for (let e = 0; e < 4; e++) {
+      const nk = this.keyAt(i + EDGE_DIRS[e][0], j + EDGE_DIRS[e][1]);
+      if (!nk || familyOf(nk) === fam) continue;
+      border = true;
+      if (priorityOf(nk) > pa) {
+        add(T.blendKey(familyOf(nk), e, v), GROUND_DEPTH + 0.1);
+        if (liquid) add(T.foamKey(e, v, lava), GROUND_DEPTH + 0.2, lava ? 0xffffff : tint);
+      }
+    }
+    // Corners: only when neither adjacent edge already blends that neighbour.
+    for (let q = 0; q < 4; q++) {
+      const [dx, dy] = CORNER_DIRS[q];
+      const nk = this.keyAt(i + dx, j + dy);
+      if (!nk || familyOf(nk) === fam || priorityOf(nk) <= pa) continue;
+      const e1 = this.keyAt(i + dx, j), e2 = this.keyAt(i, j + dy);
+      if ((e1 && familyOf(e1) === familyOf(nk)) || (e2 && familyOf(e2) === familyOf(nk))) continue;
+      border = true;
+      add(T.blendKey(familyOf(nk), 4 + q, v), GROUND_DEPTH + 0.1);
+    }
+    if (liquid) return out;
+    const D = this.decals;
+    const r0 = hash2(i * 3 + 1, j * 5 + 2), r1 = hash2(i * 7 + 3, j * 11 + 5);
+    if (r0 < (border ? 0.55 : 0.07)) {
+      let list: string[] | undefined;
+      if (fam === 'w1_grass') list = r1 < 0.45 ? D.tuft : r1 < 0.7 ? D.flower : D.pebble;
+      else if (fam === 'w1_forest_floor') list = r1 < 0.7 ? D.tuft : D.pebble;
+      else if (fam === 'w1_dirt') list = D.pebble;
+      else if (fam === 'w2_ash') list = r1 < 0.5 ? D.pebble : D.crack;
+      else if (fam === 'w2_obsidian') list = D.crack;
+      if (list) {
+        const nn = border && r1 > 0.3 ? 2 : 1;
+        for (let k = 0; k < nn; k++) {
+          const ox = (hash2(i + k * 13, j + 17) - 0.5) * 70, oy = (hash2(i + 19, j + k * 23) - 0.5) * 30;
+          const im = add(list[(hash2(i + k, j + 29) * list.length) | 0], GROUND_DEPTH + 0.3, tint, c.x + ox, c.y + oy, false);
+          im.setOrigin(0.5, 0.85);
+          if (hash2(i + 31, j + k) < 0.5) im.setFlipX(true);
+        }
+      }
+    }
+    return out;
   }
 
   private makeWall(i: number, j: number): Img {
@@ -141,7 +291,10 @@ export class WorldRenderer {
   }
 
   destroy(): void {
-    for (const s of [...this.ground.values(), ...this.walls.values(), ...this.propSprites.values()]) s.destroy();
+    for (const s of [...this.ground.values(), ...this.walls.values(), ...this.propSprites.values(), ...this.bGround.values(), ...this.bProps.values()]) s.destroy();
+    for (const a of this.decor.values()) for (const o of a) o.destroy();
+    this.decor.clear();
+    this.bGround.clear(); this.bProps.clear();
     this.ground.clear(); this.walls.clear(); this.propSprites.clear(); this.fluids.clear(); this.visible.length = 0;
   }
 }

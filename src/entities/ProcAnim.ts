@@ -55,13 +55,14 @@ export class ProcAnim {
   squash(sx: number, sy: number): void { this.spring.x = sx; this.spring.y = sy; }
 
   /** Quick lunge toward a screen-space direction (attacks). Also starts the attack sheet animation. */
-  attackLunge(dx: number, dy: number, dur = 160): void {
+  attackLunge(dx: number, dy: number, dur = 160, animMs: number | false = Math.max(dur, 280)): void {
     const l = Math.hypot(dx, dy) || 1;
     this.lunge = { x: (dx / l) * 14, y: (dy / l) * 7, t: dur, dur };
     this.spring.x = 0.9; this.spring.y = 1.12;
-    if (this.animator) {
+    if (this.animator && animMs !== false) {
       if (Math.abs(dy) > 0.01) this.animator.up = dy < 0;
-      this.animator.playAttack(Math.max(dur, 280));
+      if (Math.abs(dx) > 0.01) this.setFacingLeft(dx < 0);
+      this.animator.playAttack(animMs);
     }
   }
 

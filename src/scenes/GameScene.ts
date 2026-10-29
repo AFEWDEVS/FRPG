@@ -97,6 +97,10 @@ export class GameScene extends Phaser.Scene {
     this.zoomTarget = GameScene.zoomPref;
     cam.setZoom(this.zoomTarget);
     cam.startFollow(this.player, true, 0.1, 0.1).setRoundPixels(false);
+    // Clamp to the map's iso bounding box plus a margin (the renderer fills everything beyond with border terrain).
+    const mw = this.map.width * 64, mh = this.map.height * 64, mg = 420;
+    cam.setBounds(-mh - mg, -mg, mw + mh + 2 * mg, (this.map.width + this.map.height) * 32 + 2 * mg);
+    cam.setBackgroundColor(this.areaDef.bg ?? '#0e1612');
     this.look = { x: 0, y: 0 };
     this.lastPos = { x: this.player.x, y: this.player.y };
     applyGrade(this, cam, this.areaDef.grade);

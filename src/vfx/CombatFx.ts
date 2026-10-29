@@ -155,11 +155,13 @@ export class CombatFx {
     const sc = this.scene, p = PALETTE[el];
     const parts: Phaser.GameObjects.GameObject[] = [];
     const tweens: Phaser.Tweens.Tween[] = [];
-    const key = sc.textures.exists('vfx_magic_circle') ? 'vfx_magic_circle' : 'fx_ring';
-    const circ = sc.add.image(x, y, key).setScale(0.1, 0.05).setTint(p.mid).setBlendMode(ADD).setAlpha(0.95).setDepth(GROUND);
-    const inner = sc.add.image(x, y, key).setScale(0.05, 0.025).setTint(p.core).setBlendMode(ADD).setAlpha(0.7).setDepth(GROUND + 0.01);
-    tweens.push(sc.tweens.add({ targets: circ, scaleX: 0.52, scaleY: 0.26, duration: 200, ease: 'Back.easeOut' }));
-    tweens.push(sc.tweens.add({ targets: inner, scaleX: 0.3, scaleY: 0.15, duration: 240, ease: 'Back.easeOut' }));
+    const hasCc = sc.textures.exists('fx_cast_circle');
+    const key = hasCc ? 'fx_cast_circle' : sc.textures.exists('vfx_magic_circle') ? 'vfx_magic_circle' : 'fx_ring';
+    const km = hasCc ? 0.5 : 1; // cast_circle.png is 512px, the old circle 256px
+    const circ = sc.add.image(x, y, key).setScale(0.1 * km, 0.05 * km).setTint(p.mid).setBlendMode(ADD).setAlpha(0.95).setDepth(GROUND);
+    const inner = sc.add.image(x, y, key).setScale(0.05 * km, 0.025 * km).setTint(p.core).setBlendMode(ADD).setAlpha(0.7).setDepth(GROUND + 0.01);
+    tweens.push(sc.tweens.add({ targets: circ, scaleX: 0.52 * km, scaleY: 0.26 * km, duration: 200, ease: 'Back.easeOut' }));
+    tweens.push(sc.tweens.add({ targets: inner, scaleX: 0.3 * km, scaleY: 0.15 * km, duration: 240, ease: 'Back.easeOut' }));
     tweens.push(sc.tweens.add({ targets: circ, angle: 360, duration: 1500, repeat: -1 }));
     tweens.push(sc.tweens.add({ targets: inner, angle: -360, duration: 1100, repeat: -1 }));
     const bg = sc.add.rectangle(x, y - 128, 66, 10, 0x000000, 0.7).setStrokeStyle(2, 0xffffff, 0.7).setDepth(VFX_DEPTH + 30);
@@ -284,7 +286,14 @@ export class CombatFx {
     sc.tweens.add({ targets: pil, scaleY: 4.2, duration: 260, ease: 'Cubic.easeOut' });
     sc.tweens.add({ targets: pil, alpha: 0, scaleX: 1.6, delay: 900, duration: 1100, ease: 'Quad.easeIn', onComplete: () => pil.destroy() });
     const hy = groundY - 62;
-    for (const dir of [-1, 1]) {
+    const useAngel = sc.textures.exists('fx_levelup_angel') && sc.anims.exists('levelup_angel');
+    if (useAngel) {
+      const ang = sc.add.sprite(x, groundY - 70, 'fx_levelup_angel').setScale(2.1).setDepth(VFX_DEPTH - 4).setAlpha(0);
+      ang.play('levelup_angel');
+      sc.tweens.add({ targets: ang, alpha: 1, duration: 200 });
+      sc.tweens.add({ targets: ang, y: ang.y - 40, alpha: 0, delay: 1000, duration: 700, onComplete: () => ang.destroy() });
+    }
+    for (const dir of useAngel ? [] : [-1, 1]) {
       const w = sc.add.image(x + dir * 8, hy, 'fx_wing').setOrigin(dir < 0 ? 1 - 8 / 256 : 8 / 256, 170 / 200).setFlipX(dir < 0).setBlendMode(ADD).setTint(0xfff0b0).setDepth(VFX_DEPTH - 4).setScale(0.1).setAlpha(0.95);
       sc.tweens.add({ targets: w, scaleX: 0.95, scaleY: 0.95, duration: 480, ease: 'Back.easeOut' });
       sc.tweens.add({ targets: w, scaleX: 0.7, yoyo: true, repeat: 2, delay: 520, duration: 220, ease: 'Sine.easeInOut' });

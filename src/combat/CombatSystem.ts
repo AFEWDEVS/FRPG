@@ -600,7 +600,6 @@ export class CombatSystem {
     this.castUntil = this.now + Math.min(300, interval * 0.5);
     const sw = gridToWorld(dx, dy);
     p.anim.attackLunge(sw.x, sw.y, 170);
-    (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx, dy });
     const cx = p.x, cy = p.y - 45;
     if (cls.basic === 'melee') {
       this.sfx(Math.random() < 0.5 ? 'sword_swing' : 'sword_swing_2', { volume: 0.7 });
@@ -670,8 +669,7 @@ export class CombatSystem {
     p.stop();
     p.faceGrid(a.dx, a.dy);
     const sw = gridToWorld(a.dx, a.dy);
-    (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx: a.dx, dy: a.dy, cast: true });
-    p.anim.attackLunge(sw.x * 0.4, sw.y * 0.4, Math.min(ms, 200));
+    p.anim.attackLunge(sw.x * 0.4, sw.y * 0.4, Math.min(ms, 200), Math.max(280, ms)); // cast anim spans the whole cast
     this.casting = true;
     this.castUntil = this.now + ms + 60;
     const el = ELEMENT_FX[def.element];
@@ -718,9 +716,8 @@ export class CombatSystem {
     }
     this.castUntil = this.now + lock * lockMul;
     const sw = gridToWorld(a.dx, a.dy);
-    p.anim.attackLunge(sw.x, sw.y, Math.min(220, lock));
+    p.anim.attackLunge(sw.x, sw.y, Math.min(220, lock), shouted ? false : undefined); // timed casts already played their anim
     if (!shouted) {
-      (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx: a.dx, dy: a.dy });
       this.skillShout(p.x, p.y - 150, def.name, SHOUT_COLOR[def.element]);
     }
     this.attackReadyAt = Math.max(this.attackReadyAt, this.now + 250);

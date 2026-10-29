@@ -24,9 +24,11 @@ export class PreloadScene extends Phaser.Scene {
       bar.clear().fillStyle(0x9a1c14).fillRect(cx - 298, cy - 12, 596 * p, 24);
       bar.fillStyle(0xd8503a, 0.5).fillRect(cx - 298, cy - 12, 596 * p, 8);
     });
-    this.load.on('loaderror', (f: Phaser.Loader.File) => { if (!f.key.startsWith('anim')) this.failed.push(f.key); });
+    this.load.on('loaderror', (f: Phaser.Loader.File) => { if (!f.key.startsWith('anim') && !f.key.startsWith('fx_')) this.failed.push(f.key); });
 
     for (const e of IMAGE_MANIFEST) this.load.image(e.key, e.path);
+    this.load.image('fx_cast_circle', 'assets/gen/fx/cast_circle.png');
+    this.load.spritesheet('fx_levelup_angel', 'assets/gen/fx/levelup_angel.png', { frameWidth: 192, frameHeight: 192 });
     for (const a of AUDIO_MANIFEST) this.load.audio(a.key, a.urls);
     // Optional animation sheets: many do not exist yet, a failed meta file is simply ignored.
     for (const k of CHAR_KEYS) this.load.json(animMetaKey(k), `${ANIM_DIR}/${k}.json`);
@@ -35,6 +37,9 @@ export class PreloadScene extends Phaser.Scene {
   create(): void {
     const n = ensurePlaceholders(this);
     if (n > 0) console.info(`[assets] ${n} imagenes generadas como placeholder; ${this.failed.length} archivos fallidos`);
+    if (this.textures.exists('fx_levelup_angel') && !this.anims.exists('levelup_angel')) {
+      this.anims.create({ key: 'levelup_angel', frames: this.anims.generateFrameNumbers('fx_levelup_angel', { start: 0, end: 5 }), frameRate: 12, repeat: 1 });
+    }
     AudioManager.init(this.game);
     this.loadAnimSheets();
   }

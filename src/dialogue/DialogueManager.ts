@@ -23,9 +23,9 @@ export function speakerOf(who: string): Speaker {
     case 'healer': return { name: 'Hermana Melisa', portrait: 'portrait_healer' };
     case 'amaranta': return { name: 'Lady Amaranta', portrait: 'portrait_amaranta' };
     case 'malvarron': return { name: 'Lord Malvarrón', portrait: 'portrait_malvarron' };
-    case 'thorn': return { name: 'Reina Espinas', portrait: 'portrait_amaranta' };
-    case 'ogre': return { name: 'Ogro Poeta', portrait: 'portrait_malvarron' };
-    case 'gargoyle': return { name: 'Gárgola Celosa', portrait: 'portrait_malvarron' };
+    case 'thorn': return { name: 'Reina Espinas', portrait: 'portrait_thorn_queen' };
+    case 'ogre': return { name: 'Ogro Poeta', portrait: 'portrait_ogre_poet' };
+    case 'gargoyle': return { name: 'Gárgola Celosa', portrait: 'portrait_jealous_gargoyle' };
     default: return { name: who, portrait: 'portrait_elder' };
   }
 }

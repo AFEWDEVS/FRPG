@@ -230,9 +230,10 @@ export class VfxManager {
 
   /** Persistent ground circle (magic circle under buffs / meteor target). Caller must destroy. */
   groundCircle(x: number, y: number, o: { scale?: number; tint?: number; alpha?: number; spin?: number } = {}): Phaser.GameObjects.Image | null {
-    if (!this.has('vfx_magic_circle')) return null;
-    const sc = o.scale ?? 0.8;
-    const img = this.scene.add.image(x, y, 'vfx_magic_circle').setScale(sc, sc * 0.5).setTint(o.tint ?? 0xffffff)
+    const cc = this.has('fx_cast_circle');
+    if (!cc && !this.has('vfx_magic_circle')) return null;
+    const sc = (o.scale ?? 0.8) * (cc ? 0.5 : 1);
+    const img = this.scene.add.image(x, y, cc ? 'fx_cast_circle' : 'vfx_magic_circle').setScale(sc, sc * 0.5).setTint(o.tint ?? 0xffffff)
       .setAlpha(o.alpha ?? 0.8).setDepth(GROUND_FX_DEPTH + 0.2).setBlendMode(Phaser.BlendModes.ADD);
     if (o.spin) this.scene.tweens.add({ targets: img, angle: 360, duration: o.spin, repeat: -1 });
     return img;

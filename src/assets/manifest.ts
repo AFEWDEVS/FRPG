@@ -25,7 +25,7 @@ export const CHAR_KEYS = list(
 );
 add(CHAR_KEYS, 'characters', 'char');
 // Portrait texture keys are prefixed "portrait_" (file: portraits/<key>.png)
-add(list('hero_knight hero_mage hero_ranger amaranta elder merchant healer bard malvarron'), 'portraits', 'portrait', 'png', 'portrait_');
+add(list('hero_knight hero_mage hero_ranger amaranta elder merchant healer bard malvarron thorn_queen ogre_poet jealous_gargoyle'), 'portraits', 'portrait', 'png', 'portrait_');
 // UI textures: key = "ui_" + file name
 add(list('panel_stone orb_health orb_mana orb_frame button parchment slot'), 'ui', 'ui', 'png', 'ui_');
 add(SKILLS.map((s) => `skill_${s.id}`), 'ui/icons', 'icon', 'png', 'icon_');
