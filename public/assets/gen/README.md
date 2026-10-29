@@ -173,3 +173,107 @@ Notes: wall blocks (tiles/*_wall.png) are 256 wide, ~256-265 tall (shorter than 
 ## Audit
 
 `python tools/art/audit.py [--fix]` scans characters/props/ui/icons for border-connected black or opaque backgrounds. Current result: 0 flagged (icons are rounded dark tiles by design, with transparent corners).
+
+
+## WORLD REPAINT v2 (painterly oil style) - current art direction
+
+Characters/anim/portraits/icons are unchanged (chibi). The WORLD (tiles, walls, props) was repainted in a painterly oil style (visible brush strokes, impasto, earthy palette with saturated accents) for a closer camera (~1.5-2x). Old versions are in `_raw/old/{tiles,props,ui}/`. Raws: `_raw/v2/`. Pipeline: `tools/art/jobs2.py` (prompts) -> `gen2.py "id,id" ...` -> `build2.py [tiles walls props atmo ui]`. Previews in `_raw/previews/v2/`.
+
+- **Ground tiles are now 512x256 diamonds** (same filenames, 11 keys; scale old code by 2x or use displayWidth 256 for the old size). Seamless, verified with 6x6 iso montages.
+- **Wall blocks are now 512 wide**: d1_wall 512x784, d2_wall 512x790, town_wall 512x768 (about 1.5x tile width tall; bottom diamond footprint 512x256 is at the bottom, anchor bottom-center).
+- **Props** are about 1.6x their old pixel height (bottom-center anchored, 4px bottom pad). 17 NEW props: cliff_1, cliff_2, ruin_arch, broken_wall, bridge_wood, big_root, giant_mushroom, waterfall_rock, banner_festival, lantern_string, statue_heart, lava_pillar, arcane_obelisk, chains_hanging, cobweb_corner, stalagmite, bones_large.
+- **atmo/** (RGBA, luminance->alpha): god_rays 1024x1024 (white, use ADD), fog_wisp_1/2 1024x512 (white, NORMAL/ADD low alpha), light_pool 512 (white glow, ADD, tint it), shadow_blob 512 (dark, NORMAL/MULTIPLY), paint_vignette 1920x1080 (dark brushy edges, transparent center, stretch to screen), paper_grain 512 (opaque gray tileable, use as OVERLAY/MULTIPLY at low alpha).
+- **ui2/**: orb_life_small, orb_mana_small (160, painted glass orbs with gold rim), bar_frame 600x40 (transparent outside), bar_fill_red/gold/blue 600x24 (opaque brushy, crop with setCrop to show %), slot_round 64, panel_painted 512x512 (opaque, dark with thin gold rim inset ~14px: use as 9-slice with ~48px borders), button_painted 240x64, divider 512x32.
+
+### tiles/ (v2)
+| file | size |
+|---|---|
+| d1_floor.png | 512x256 |
+| d1_wall.png | 512x784 |
+| d2_floor.png | 512x256 |
+| d2_wall.png | 512x790 |
+| town_cobble.png | 512x256 |
+| town_wall.png | 512x768 |
+| w1_dirt.png | 512x256 |
+| w1_forest_floor.png | 512x256 |
+| w1_grass.png | 512x256 |
+| w1_grass_flowers.png | 512x256 |
+| w1_water.png | 512x256 |
+| w2_ash.png | 512x256 |
+| w2_lava.png | 512x256 |
+| w2_obsidian.png | 512x256 |
+
+### props/ (v2)
+| file | size |
+|---|---|
+| arcane_obelisk.png | 328x424 |
+| banner_festival.png | 312x404 |
+| barrel.png | 102x132 |
+| big_root.png | 272x264 |
+| bones_large.png | 175x164 |
+| brazier.png | 167x212 |
+| bridge_wood.png | 206x204 |
+| broken_wall.png | 230x224 |
+| bush.png | 169x148 |
+| campfire.png | 156x148 |
+| chains_hanging.png | 283x324 |
+| chest_closed.png | 136x132 |
+| chest_open.png | 132x148 |
+| cliff_1.png | 376x404 |
+| cliff_2.png | 359x404 |
+| cobweb_corner.png | 242x244 |
+| crate.png | 107x116 |
+| crystal.png | 223x228 |
+| dead_tree.png | 438x452 |
+| dungeon_entrance.png | 469x420 |
+| fence.png | 148x148 |
+| flowers.png | 90x84 |
+| giant_mushroom.png | 345x364 |
+| house_1.png | 579x548 |
+| house_2.png | 525x580 |
+| lantern_string.png | 284x264 |
+| lava_pillar.png | 205x384 |
+| lava_rock.png | 194x180 |
+| market_stall.png | 312x324 |
+| mushrooms.png | 112x116 |
+| obsidian_spire.png | 358x388 |
+| rock_1.png | 157x132 |
+| rock_2.png | 181x180 |
+| ruin_arch.png | 426x424 |
+| ruins_pillar.png | 261x420 |
+| skull_pile.png | 129x116 |
+| stairs_down.png | 224x196 |
+| stalagmite.png | 249x264 |
+| statue_heart.png | 350x404 |
+| torch.png | 82x180 |
+| tree_oak_1.png | 464x484 |
+| tree_oak_2.png | 632x484 |
+| tree_pine.png | 385x516 |
+| waterfall_rock.png | 402x404 |
+| waypoint.png | 297x260 |
+| well.png | 214x244 |
+
+### atmo/
+| file | size |
+|---|---|
+| fog_wisp_1.png | 1024x512 |
+| fog_wisp_2.png | 1024x512 |
+| god_rays.png | 1024x1024 |
+| light_pool.png | 512x512 |
+| paint_vignette.png | 1920x1080 |
+| paper_grain.png | 512x512 |
+| shadow_blob.png | 512x512 |
+
+### ui2/
+| file | size |
+|---|---|
+| bar_fill_blue.png | 600x24 |
+| bar_fill_gold.png | 600x24 |
+| bar_fill_red.png | 600x24 |
+| bar_frame.png | 600x40 |
+| button_painted.png | 240x64 |
+| divider.png | 512x32 |
+| orb_life_small.png | 160x160 |
+| orb_mana_small.png | 160x160 |
+| panel_painted.png | 512x512 |
+| slot_round.png | 64x64 |

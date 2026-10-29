@@ -6,7 +6,7 @@ try {
   // level up and learn all skills
   await t.dbg(() => { const g = window.__dbg.GameState; g.profile.level = 20; g.profile.skillPoints = 40; g.profile.statPoints = 20; g.emitProgress(); g.emitVitals(); });
   await t.page.keyboard.press('t'); await t.sleep(600); await t.shot(`c${cls}_skillpanel`);
-  await t.page.keyboard.press('Space');
+  await t.page.keyboard.press('Escape');
   const learned = await t.dbg(async () => {
     const m = await import('/src/skills/index.ts'); const d = await import('/src/data/skills.ts');
     const g = window.__dbg.GameState; const ids = d.SKILLS.filter((s) => s.classId === g.profile.classId).sort((a,b)=>a.reqLevel-b.reqLevel).map((s) => s.id);

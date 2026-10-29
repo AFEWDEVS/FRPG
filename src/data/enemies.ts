@@ -45,6 +45,8 @@ export interface EnemyDef {
   charmImmune?: boolean;
   /** Spawned by bosses only: never drops loot / xp. */
   minion?: boolean;
+  /** Poise (stagger resistance). Default derived from hp; bosses set it explicitly. */
+  poise?: number;
   /** Shown above the head when the enemy flees / dies etc. */
   quips?: string[];
 }
@@ -61,12 +63,12 @@ export const ENEMIES: Record<string, EnemyDef> = Object.fromEntries([
   base('imp', 'Diablillo Chismoso', 50, 3.8, 20, { kind: 'ranged', range: 7, windup: 480, cooldown: 2000, dmg: [5, 9], type: 'fire', element: 'fire', keepDist: 4, projSpeed: 7 }, { resists: { fire: 50 }, quips: ['¡Me han contado cosas!', 'Hihihi...'] }),
   base('skeleton', 'Esqueleto Desamparado', 70, 3.0, 24, melee([7, 12], 1400, 420), { resists: { cold: 40, lightning: -20 }, armor: 10, quips: ['Nadie me abraza...'] }),
   base('fire_elemental', 'Elemental Ardiente', 90, 3.0, 30, { kind: 'ranged', range: 6.5, windup: 520, cooldown: 1900, dmg: [8, 14], type: 'fire', element: 'fire', keepDist: 3, projSpeed: 6.5 }, { resists: { fire: 75, cold: -50 } }),
-  base('ash_golem', 'Gólem de Ceniza', 160, 2.2, 40, { kind: 'slam', range: 2.2, windup: 780, cooldown: 2600, dmg: [12, 20], type: 'physical', radius: 2.4, element: 'physical' }, { scale: 1.2, armor: 40, resists: { fire: 30, lightning: -25 } }),
+  base('ash_golem', 'Gólem de Ceniza', 160, 2.2, 40, { kind: 'slam', range: 2.2, windup: 780, cooldown: 2600, dmg: [12, 20], type: 'physical', radius: 2.4, element: 'physical' }, { scale: 1.2, armor: 40, poise: 95, resists: { fire: 30, lightning: -25 } }),
   // ---- bosses
-  base('thorn_queen', 'Reina Espinas', 900, 3.0, 400, { kind: 'melee', range: 2, windup: 450, cooldown: 1500, dmg: [8, 13], type: 'physical' }, { scale: 1.6, boss: true, armor: 20, resists: { fire: -25 }, aggro: 11 }),
-  base('ogre_poet', 'Ogro Poeta', 1400, 2.6, 600, { kind: 'melee', range: 2.4, windup: 600, cooldown: 1700, dmg: [12, 18], type: 'physical' }, { scale: 1.6, boss: true, armor: 30, aggro: 11 }),
-  base('jealous_gargoyle', 'Gárgola Celosa', 2200, 3.0, 900, { kind: 'melee', range: 2, windup: 400, cooldown: 1500, dmg: [14, 22], type: 'physical' }, { scale: 1.6, boss: true, armor: 40, resists: { lightning: 25 }, aggro: 11 }),
-  base('malvarron', 'Lord Malvarrón', 4000, 3.2, 2000, { kind: 'ranged', range: 8, windup: 500, cooldown: 1800, dmg: [10, 16], type: 'lightning', element: 'arcane', keepDist: 3, projSpeed: 8 }, { scale: 1.5, boss: true, resists: { fire: 20, cold: 20, lightning: 20 }, aggro: 12 }),
+  base('thorn_queen', 'Reina Espinas', 900, 3.0, 400, { kind: 'melee', range: 2, windup: 450, cooldown: 1500, dmg: [8, 13], type: 'physical' }, { scale: 1.6, boss: true, poise: 240, armor: 20, resists: { fire: -25 }, aggro: 11 }),
+  base('ogre_poet', 'Ogro Poeta', 1400, 2.6, 600, { kind: 'melee', range: 2.4, windup: 600, cooldown: 1700, dmg: [12, 18], type: 'physical' }, { scale: 1.6, boss: true, poise: 300, armor: 30, aggro: 11 }),
+  base('jealous_gargoyle', 'Gárgola Celosa', 2200, 3.0, 900, { kind: 'melee', range: 2, windup: 400, cooldown: 1500, dmg: [14, 22], type: 'physical' }, { scale: 1.6, boss: true, poise: 380, armor: 40, resists: { lightning: 25 }, aggro: 11 }),
+  base('malvarron', 'Lord Malvarrón', 4000, 3.2, 2000, { kind: 'ranged', range: 8, windup: 500, cooldown: 1800, dmg: [10, 16], type: 'lightning', element: 'arcane', keepDist: 3, projSpeed: 8 }, { scale: 1.5, boss: true, poise: 450, resists: { fire: 20, cold: 20, lightning: 20 }, aggro: 12 }),
   // ---- minions summoned by bosses
   base('vine', 'Enredadera Celosa', 60, 0, 0, melee([5, 9], 1300, 400, 1.9), { textureKey: 'mushroom_man', tint: 0x4fae3c, scale: 0.9, immobile: true, minion: true, charmImmune: true }),
   base('mirror_clone', 'Reflejo de Malvarrón', 1, 2.6, 0, { kind: 'ranged', range: 8, windup: 600, cooldown: 2400, dmg: [6, 10], type: 'lightning', element: 'arcane', keepDist: 4, projSpeed: 8 }, { textureKey: 'malvarron', tint: 0x9fe6ff, alpha: 0.7, scale: 1.4, minion: true, charmImmune: true }),

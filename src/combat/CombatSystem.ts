@@ -18,6 +18,7 @@ import {
   type DamageInfo, type HitResult,
 } from './damage';
 import { computeDerived, type DerivedStats } from './stats';
+import { PlayerMoves } from './PlayerMoves';
 import type { GridPos } from '../core/types';
 
 type Updater = (dtMs: number) => boolean | void;
@@ -55,7 +56,11 @@ export class CombatSystem {
   private target: Enemy | null = null;
   private pending: { skillId: string; gx: number; gy: number; targetId?: string; slot: string } | null = null;
   private attackReadyAt = 0;
-  private castUntil = 0;
+  castUntil = 0;
+  moves: PlayerMoves;
+  private timeMul = 1;
+  private slowMoUntil = 0;
+  private attackers = new Set<Enemy>();
   private repath = 0;
   private updaters: Updater[] = [];
   private unsub: (() => void)[] = [];
@@ -74,10 +79,15 @@ export class CombatSystem {
     this.vfx = scene.vfx;
     this.derived = this.computeNow();
     normalizeHotbar();
+    this.moves = new PlayerMoves(this);
     const p = this.player;
     p.walkable = (i, j) => scene.map.isWalkable(i, j);
     for (const e of scene.enemies) this.register(e);
     this.unsub.push(EventBus.on('skill:use', (s) => this.useSlot(s.slot, s.gx, s.gy, s.targetId)));
+    this.unsub.push(EventBus.on('input:dodge', (d) => this.moves.dodge(d.gx, d.gy)));
+    this.unsub.push(EventBus.on('input:heavy', (h) => { if (h.phase === 'start') this.moves.heavyStart(h.gx, h.gy, h.targetId); else this.moves.heavyRelease(h.gx, h.gy); }));
+    this.unsub.push(EventBus.on('input:block', (b) => this.moves.setBlock(b.down)));
+    this.unsub.push(EventBus.on('input:sprint', (s) => this.moves.setSprint(s.on)));
     this.unsub.push(EventBus.on('player:levelup', ({ level }) => this.levelUpFx(level)));
     this.refreshVitals(0);
   }
@@ -183,11 +193,15 @@ export class CombatSystem {
 
   update(time: number, dtMs: number): void {
     this.now = this.scene.time.now;
+    if (this.timeMul < 1 && performance.now() > this.slowMoUntil) { this.timeMul = 1; this.scene.tweens.timeScale = 1; }
+    dtMs *= this.timeMul;
     const p = this.player;
     if (this.now - this.lastDeriveAt > 250) { this.derived = this.computeNow(); this.lastDeriveAt = this.now; }
     for (let i = this.updaters.length - 1; i >= 0; i--) { if (this.updaters[i](dtMs) === false) this.updaters.splice(i, 1); }
     this.statuses(dtMs);
     this.refreshVitals(dtMs);
+    this.moves.update(dtMs);
+    for (const e of this.attackers) if (e.dead || !e.active || !e.attacking) this.attackers.delete(e);
 
     if (!p.dead) this.playerActions(dtMs);
 
@@ -229,8 +243,8 @@ export class CombatSystem {
     if (this.hasteUntil && now > this.hasteUntil) { this.hasteUntil = 0; this.hasteMult = 1; }
     const slowed = this.slowMult < 1 && !p.dead;
     if (slowed !== this.slowTinted) { this.slowTinted = slowed; if (slowed) p.sprite.setTint(0xcfa8ff); else p.sprite.clearTint(); }
-    p.speedMultiplier = this.derived.moveSpeed * this.slowMult * this.hasteMult * (now < this.stunUntil ? 0 : 1);
-    p.locked = now < this.castUntil || now < this.stunUntil;
+    p.speedMultiplier = this.derived.moveSpeed * this.slowMult * this.hasteMult * this.moves.speedMul() * (now < this.stunUntil ? 0 : 1);
+    p.locked = now < this.castUntil || now < this.stunUntil || this.moves.locked;
     void dtMs;
   }
 
@@ -294,7 +308,8 @@ export class CombatSystem {
     }
     const lvl = info.ally ? 1 + Math.floor(GameState.profile.level * 0.5) : GameState.profile.level;
     const mitigated = e.mitigate(info.amount, info.type, info.pure, lvl);
-    const amount = Math.max(1, Math.round(mitigated));
+    let amount = Math.max(1, Math.round(mitigated));
+    if (e.staggered && !info.dot) amount = Math.round(amount * (e.def.boss ? 1.4 : 1.25));
     const hpBefore = e.hp;
     const dealt = Math.round(e.applyDamage(amount));
     if (dealt <= 0) return { dealt: 0, crit: false, killed: false };
@@ -310,12 +325,16 @@ export class CombatSystem {
       if (info.knockback && info.from) e.knockFrom(info.from, info.knockback * (crit ? 1.5 : 1));
       if (!info.ally) {
         const ratio = dealt / Math.max(1, e.maxHp);
-        if (crit || ratio > 0.04) this.vfx.hitStop(Math.min(120, 24 + ratio * 260 + (crit ? 36 : 0)));
+        if (info.hitStop) this.vfx.hitStop(Math.min(120, info.hitStop + (crit ? 15 : 0)));
+        else if (crit || ratio > 0.04) this.vfx.hitStop(Math.min(120, 24 + ratio * 260 + (crit ? 36 : 0)));
         const sh = shakeFor(dealt, e.maxHp, crit);
-        if (sh > 0.0035) this.vfx.screenShake(sh, 100);
+        if (info.impulse && info.from) this.impulse(e.gx - info.from.gx, e.gy - info.from.gy, info.impulse);
+        else if (sh > 0.0035) this.vfx.screenShake(sh, 100);
+        if (info.weight) this.sfx('enemy_hit', { volume: info.heavy ? 0.65 : 0.4 });
         if (crit) { this.vfx.screenShake(Math.max(sh, 0.006), 130); this.vfx.screenFlash(0xfff4d0, 70); }
       }
     }
+    if (!info.dot && !e.dead && !e.invulnerable) e.hitPoise(info.poise ?? 12, { heavy: info.heavy });
     if (!info.ally && this.derived.lifeSteal > 0) this.healPlayer((dealt * this.derived.lifeSteal) / 100);
     if (!e.aggro) { e.aggro = true; this.alertPack(e); }
     return { dealt, crit, killed: e.dead && hpBefore > 0 };
@@ -325,14 +344,14 @@ export class CombatSystem {
   playerHit(e: Enemy, pct: number, type: DamageInfo['type'], o: Partial<DamageInfo> = {}): HitResult {
     const r = rollPlayerDamage(this.derived, pct);
     const p = this.player;
-    return this.damageEnemy(e, { amount: r.amount, type, crit: r.crit, from: p, knockback: 0.35, ...o });
+    return this.damageEnemy(e, { amount: r.amount, type, crit: r.crit, from: p, knockback: 0.35, poise: Math.round(pct * 0.18), ...o });
   }
 
   /** Damage to the player. Returns damage actually taken (after armor / resist / shield). */
   damagePlayer(info: DamageInfo, src?: Enemy): number {
     const p = this.player;
     if (p.dead || this.invulnerable) return 0;
-    if (!info.pure && !info.dot && Math.random() < 0.03) { this.vfx.damageNumber('MISS', p.x, p.y - 120, { kind: 'miss' }); return 0; }
+    if (!info.pure && !info.dot && !this.moves.iframes && Math.random() < 0.03) { this.vfx.damageNumber('MISS', p.x, p.y - 120, { kind: 'miss' }); return 0; }
     const d = this.derived;
     let a = info.amount;
     if (!info.pure) {
@@ -340,6 +359,9 @@ export class CombatSystem {
       else a *= 1 - playerResist(d, info.type) / 100;
     }
     a = Math.max(1, Math.round(a));
+    const fi = this.moves.filterIncoming(info, a, src);
+    if (fi.negated) return 0;
+    a = fi.amount;
     if (this.shieldAbsorb > 0) {
       const ab = Math.min(a, this.shieldAbsorb);
       this.shieldAbsorb -= ab; a -= ab;
@@ -359,6 +381,7 @@ export class CombatSystem {
     EventBus.emit('player:damaged', { amount: a, type: info.type, life: GameState.life });
     GameState.emitVitals();
     if (GameState.life <= 0) this.killPlayer();
+    else this.moves.afterHit(a, info, src);
     return a;
   }
 
@@ -366,6 +389,7 @@ export class CombatSystem {
     const p = this.player;
     if (p.dead) return;
     p.dead = true;
+    this.moves.reset();
     p.stop();
     this.clearShield();
     this.target = null; this.pending = null;
@@ -378,7 +402,7 @@ export class CombatSystem {
       const lost = Math.floor(GameState.profile.gold * 0.1);
       if (lost > 0) GameState.addGold(-lost);
       const d = this.computeNow();
-      GameState.life = d.maxLife; GameState.mana = d.maxMana;
+      GameState.life = d.maxLife; GameState.mana = d.maxMana; GameState.stamina = d.maxStamina;
       GameState.emitVitals();
       GameState.save();
       EventBus.emit('player:respawn', { goldLost: lost });
@@ -460,6 +484,7 @@ export class CombatSystem {
     this.vfx.shockwave(e.x, e.y, { element: 'shadow', radius: 380, duration: 800 });
     this.vfx.emit('smoke', e.x, e.y - 20, 12, { tint: 0x1a1018, scale: 0.8, scaleEnd: 1.8, alpha: 0.5, life: 1400, speed: [30, 120] });
     EventBus.emit('boss:engaged', { bossId: e.def.id, name: e.def.name, hp: Math.round(e.hp), maxHp: e.maxHp });
+    EventBus.emit('boss:poise', { bossId: e.def.id, value: Math.round(e.poise), max: e.maxPoise });
   }
 
   /** Comedic / dramatic line shown above the boss and sent to the UI. */
@@ -563,10 +588,10 @@ export class CombatSystem {
       return;
     }
     p.stop();
-    p.faceGrid(t.gx - p.gx, t.gy - p.gy);
+    if (this.moves.canCast()) p.faceGrid(t.gx - p.gx, t.gy - p.gy);
     if (this.now < this.castUntil) return;
-    if (usingSkill && ls) { if (this.cast(ls.id, t.gx, t.gy, t)) return; }
-    if (this.now >= this.attackReadyAt) this.performBasic(t.gx, t.gy, t);
+    if (usingSkill && ls && this.moves.canCast()) { if (this.cast(ls.id, t.gx, t.gy, t)) return; }
+    this.moves.light(t.gx, t.gy);
   }
 
   /** True if no wall blocks the straight line between two grid points. */
@@ -578,7 +603,7 @@ export class CombatSystem {
 
   onCooldown(id: string): boolean { return this.now < (this.cooldowns.get(id)?.until ?? 0); }
 
-  private aim(gx: number, gy: number): { dx: number; dy: number; angle: number } {
+  aim(gx: number, gy: number): { dx: number; dy: number; angle: number } {
     const p = this.player;
     let dx = gx - p.gx, dy = gy - p.gy;
     const l = Math.hypot(dx, dy);
@@ -588,68 +613,14 @@ export class CombatSystem {
     return { dx, dy, angle: Math.atan2(dy, dx) };
   }
 
-  /** Class basic attack (free, repeatable). */
-  performBasic(gx: number, gy: number, t?: Enemy): void {
-    const p = this.player;
-    const cls = CLASSES[GameState.profile.classId];
-    const d = this.derived;
-    const { dx, dy } = this.aim(gx, gy);
-    p.faceGrid(dx, dy);
-    const interval = cls.basicMs / (cls.basic === 'bolt' ? d.castSpeed : d.attackSpeed);
-    this.attackReadyAt = this.now + interval;
-    this.castUntil = this.now + Math.min(300, interval * 0.5);
-    const sw = gridToWorld(dx, dy);
-    p.anim.attackLunge(sw.x, sw.y, 170);
-    const cx = p.x, cy = p.y - 45;
-    if (cls.basic === 'melee') {
-      this.sfx(Math.random() < 0.5 ? 'sword_swing' : 'sword_swing_2', { volume: 0.7 });
-      this.vfx.slashArc(cx + sw.x * 0.25, cy + sw.y * 0.25, Math.atan2(sw.y, sw.x), { size: 190, ms: 200 });
-      this.after(110, () => {
-        if (p.dead) return;
-        let hit = false;
-        for (const e of this.hostiles()) {
-          const ex = e.gx - p.gx, ey = e.gy - p.gy, dist = Math.hypot(ex, ey);
-          if (dist > 2.0 + e.radius) continue;
-          if (dist > 0.6 && (ex * dx + ey * dy) / dist < 0.2) continue;
-          this.playerHit(e, 100, 'physical', { knockback: 0.4 }); hit = true;
-        }
-        void hit; void t;
-      });
-    } else if (cls.basic === 'bolt') {
-      this.sfx('fireball_cast', { volume: 0.35 });
-      this.vfx.flash(cx + sw.x * 0.2, cy, { element: 'arcane', size: 80, ms: 150 });
-      this.fireBolt(dx, dy, 'arcane', 'lightning', 100, 0.7, '#e0b8ff');
-    } else {
-      this.sfx('arrow_shoot', { volume: 0.6 });
-      const r = rollPlayerDamage(d, 100);
-      this.spawnProjectile({
-        owner: 'player', gx: p.gx, gy: p.gy, dx, dy, speed: 18, range: 15, radius: 0.35, element: 'physical', kind: 'arrow', height: 46,
-        onHit: (pr, tg) => {
-          if (tg && tg !== 'player') { this.damageEnemy(tg, { amount: r.amount, type: 'physical', crit: r.crit, from: p, knockback: 0.3, silent: true }); this.sfx('arrow_hit', { volume: 0.6 }); }
-          else this.vfx.impact(pr.worldX, pr.worldY, 'physical', false);
-        },
-      });
-    }
-  }
-
-  private fireBolt(dx: number, dy: number, el: 'arcane', type: 'lightning', pct: number, size: number, color: string): void {
-    const p = this.player;
-    const r = rollPlayerDamage(this.derived, pct);
-    this.spawnProjectile({
-      owner: 'player', gx: p.gx, gy: p.gy, dx, dy, speed: 14, range: 13, radius: 0.45, element: el, size, light: 90, height: 48,
-      onHit: (pr, tg) => {
-        this.vfx.impact(pr.worldX, pr.worldY, el, !!tg);
-        if (tg && tg !== 'player') this.damageEnemy(tg, { amount: r.amount, type, crit: r.crit, from: p, knockback: 0.25, color: r.crit ? undefined : color, silent: true });
-        if (tg) this.sfx('lightning', { volume: 0.35 });
-      },
-    });
-  }
+  /** Class basic attack: now a committed light-combo swing handled by PlayerMoves. */
+  performBasic(gx: number, gy: number, _t?: Enemy): void { this.moves.light(gx, gy); }
 
   /** Execute a skill: checks cooldown / mana, optional cast time (circle + bar + shout), runs the executor, applies cost & cooldown. */
   cast(skillId: string, gx: number, gy: number, target?: Enemy): boolean {
     const def = SKILL_BY_ID[skillId];
     const p = this.player;
-    if (!def || p.dead || p.dashing || this.casting) return false;
+    if (!def || p.dead || p.dashing || this.casting || !this.moves.canCast()) return false;
     const lvl = effectiveLevel(skillId);
     if (lvl <= 0) { this.vfx.floatingText('Habilidad no aprendida', p.x, p.y - 130, { size: 16, color: '#cccccc' }); return false; }
     if (this.now < this.castUntil) return false;
@@ -661,6 +632,7 @@ export class CombatSystem {
       if (this.now - this.noManaAt > 900) { this.noManaAt = this.now; this.vfx.floatingText('Sin maná', p.x, p.y - 130, { size: 16, color: '#7fa6ff' }); }
       return false;
     }
+    this.moves.onSkillStart();
     const ct = CAST_MS[skillId] ?? 0;
     if (ct <= 0) return this.runSkill(skillId, gx, gy, target, 1);
     // ---- timed cast: ground circle + cast bar + shout, then the executor fires
@@ -698,7 +670,7 @@ export class CombatSystem {
     if (GameState.mana < cost) return false;
     const a = this.aim(gx, gy);
     const spd = def.element === 'physical' || def.element === 'holy' ? this.derived.attackSpeed : this.derived.castSpeed;
-    let lock = 300 / spd;
+    let lock = 440 / spd;
     const x: SkillCtx = {
       c: this, def, lvl, p, d: this.derived, gx, gy, dx: a.dx, dy: a.dy, angle: a.angle, target,
       v: (k) => skillValue(def, k, lvl),
@@ -725,9 +697,39 @@ export class CombatSystem {
     return true;
   }
 
+  // ------------------------------------------------------------ heavy-combat helpers
+
+  /** Attack slots so groups take turns: at most 2 enemies (3 in big packs) attack at once. */
+  requestAttack(e: Enemy): boolean {
+    if (this.attackers.has(e)) return true;
+    const near = this.hostiles().filter((h) => h.aggro && h.distanceTo(this.player) < 9).length;
+    const cap = near >= 6 ? 3 : 2;
+    if (this.attackers.size >= cap) return false;
+    this.attackers.add(e);
+    return true;
+  }
+
+  /** Camera kick along a grid-space direction; uses GameScene.cameraImpulse when the camera module provides it. */
+  impulse(dgx: number, dgy: number, mag: number): void {
+    const w = gridToWorld(dgx, dgy);
+    const l = Math.hypot(w.x, w.y) || 1;
+    const sc = this.scene as unknown as { cameraImpulse?: (dx: number, dy: number, m: number) => void };
+    if (sc.cameraImpulse) sc.cameraImpulse(w.x / l, w.y / l, mag);
+    else this.vfx.screenShake(Math.min(0.012, 0.003 + mag * 0.005), 110);
+  }
+
+  /** Brief slow motion (parry): scales combat time and tweens. */
+  slowMo(ms: number, scale: number): void {
+    this.timeMul = scale;
+    this.slowMoUntil = performance.now() + ms;
+    this.scene.tweens.timeScale = scale;
+  }
+
   // ------------------------------------------------------------ cleanup
 
   destroy(): void {
+    this.scene.tweens.timeScale = 1;
+    this.moves.reset();
     this.unsub.forEach((u) => u());
     this.unsub = [];
     for (const pr of this.projectiles) pr.destroy();

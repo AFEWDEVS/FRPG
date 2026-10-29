@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { gridToWorld } from '../iso/iso';
+import { EventBus } from '../core/EventBus';
 import type { Enemy } from '../entities/Enemy';
 import { VFX_DEPTH, type Element } from '../vfx/VfxManager';
 import type { CombatSystem } from './CombatSystem';
@@ -7,6 +8,8 @@ import type { DamageType } from './damage';
 
 export interface BossBrain {
   update(dtMs: number, time: number): void;
+  /** Poise broken: drop pending attack callbacks and open the punish window. */
+  onStagger?(ms: number): void;
   onDamaged(): void;
   destroy(): void;
 }
@@ -39,6 +42,8 @@ abstract class BossBase implements BossBrain {
   /** Preferred distance to the player while idle (0 = melee). */
   protected keep = 0;
   protected readonly intro: string = '';
+  protected gen = 0;
+  protected rage = false;
 
   constructor(protected e: Enemy, protected c: CombatSystem) {}
 
@@ -47,10 +52,11 @@ abstract class BossBase implements BossBrain {
   protected dmg(mult = 1): number { return this.e.rollBoss(mult); }
   protected say(t: string): void { this.c.bossTaunt(this.e, t); }
   protected shout(t: string): void { this.c.skillShout(this.e.x, this.e.y - this.e.sprite.displayHeight - 10, t, '#ffb060'); }
-  protected later(ms: number, fn: () => void): void { this.c.after(ms, () => { if (!this.dead && !this.e.dead) fn(); }); }
+  protected later(ms: number, fn: () => void): void { const g = this.gen; this.c.after(ms, () => { if (!this.dead && !this.e.dead && g === this.gen) fn(); }); }
+  onStagger(ms: number): void { this.gen++; this.busy = 0; this.atkCd = Math.max(this.atkCd, ms + 500); this.basicCd = Math.max(this.basicCd, ms + 400); this.setMoving(false); }
   protected get dist(): number { return this.e.distanceTo(this.p); }
   protected get ang(): number { return Math.atan2(this.p.gy - this.e.gy, this.p.gx - this.e.gx); }
-  protected cooldown(): number { return this.phase === 1 ? 2200 : 1400; }
+  protected cooldown(): number { return (this.phase === 1 ? 2200 : 1400) * (this.rage ? 0.7 : 1); }
 
   /** Damage the player if inside a grid circle. */
   protected hitCircle(gx: number, gy: number, r: number, mult: number, type: DamageType = 'physical', color?: string): boolean {
@@ -106,6 +112,13 @@ abstract class BossBase implements BossBrain {
     const pct = (this.e.hp / this.e.maxHp) * 100;
     for (const th of [75, 25]) if (pct <= th && !this.taunted.has(th)) { this.taunted.add(th); this.onThreshold(th); }
     if (pct <= 50 && this.phase === 1) { this.phase = 2; this.startPhase2(); }
+    if (pct <= 25 && !this.rage) {
+      this.rage = true;
+      this.e.speed *= 1.12;
+      this.vfx.glow(this.e.sprite, 0xff3a1a, 5);
+      this.shout('¡ENFURECIDO!!');
+      EventBus.emit('emote:show', { target: this.e.id, name: 'angry' });
+    }
   }
 
   update(dt: number, _time?: number): void {
@@ -117,6 +130,7 @@ abstract class BossBase implements BossBrain {
     if (this.introT > 0) { this.introT -= dt; if (this.introT <= 0) e.invulnerable = false; return; }
     if (p.dead) return;
     this.basicCd -= dt;
+    if (e.staggered) return;
     if (this.busy > 0) { this.busy -= dt; return; }
     e.faceGrid(p.gx - e.gx, p.gy - e.gy);
     this.atkCd -= dt;
@@ -128,7 +142,7 @@ abstract class BossBase implements BossBrain {
         let r = Math.random() * tot;
         let chosen = ok[0];
         for (const a of ok) { r -= a.weight; if (r <= 0) { chosen = a; break; } }
-        this.busy = chosen.run();
+        this.busy = chosen.run() + (this.rage ? 350 : this.phase === 1 ? 700 : 500); // recovery = punish window
         this.atkCd = this.cooldown();
         return;
       }
@@ -150,17 +164,18 @@ abstract class BossBase implements BossBrain {
       this.basicCd = a.cooldown * (this.phase === 2 ? 0.75 : 1);
       const ang = this.ang;
       const tele = this.vfx.telegraphCone(e.gx, e.gy, ang, a.range + 0.8, 0.8, a.windup, 0xff5a2a);
-      this.busy = a.windup + 200;
+      this.busy = a.windup + 650; // swing + recovery window
+      const sw0 = gridToWorld(Math.cos(ang), Math.sin(ang));
+      e.anim.attackLunge(sw0.x, sw0.y, 200, a.windup + 300, a.windup);
       this.later(a.windup, () => {
         tele.destroy();
-        const sw = gridToWorld(Math.cos(ang), Math.sin(ang));
-        e.anim.attackLunge(sw.x, sw.y);
+        const sw = sw0;
         this.vfx.slashArc(e.x + sw.x * 0.3, e.y - e.sprite.displayHeight * 0.5, Math.atan2(sw.y, sw.x), { size: 220, ms: 220 });
         this.c.sfx('sword_swing_2', { volume: 0.6 });
         const p = this.p;
         const dx = p.gx - e.gx, dy = p.gy - e.gy, dd = Math.hypot(dx, dy);
         if (dd <= a.range + 1 && (dd < 0.8 || Math.acos(Phaser.Math.Clamp((dx * Math.cos(ang) + dy * Math.sin(ang)) / dd, -1, 1)) < 0.8)) {
-          this.c.damagePlayer({ amount: this.dmg(1), type: 'physical', from: e }, e);
+          this.c.damagePlayer({ amount: this.dmg(1), type: 'physical', from: e, heavy: true }, e);
         }
       });
     }

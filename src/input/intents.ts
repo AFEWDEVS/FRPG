@@ -11,4 +11,10 @@ export type Intent =
   | { type: 'skill'; slot: SkillSlot; gx: number; gy: number; targetId?: string }
   | { type: 'panel'; panel: PanelId }
   | { type: 'closePanels' }
+  /** Dodge roll toward a grid point (pointer or stick direction). */
+  | { type: 'dodge'; gx: number; gy: number }
+  /** Heavy attack: 'start' on hold, 'release' on button up (charged). */
+  | { type: 'heavy'; phase: 'start' | 'release'; gx: number; gy: number; targetId?: string }
+  | { type: 'block'; down: boolean }
+  | { type: 'sprint'; on: boolean }
   | { type: 'menu' };

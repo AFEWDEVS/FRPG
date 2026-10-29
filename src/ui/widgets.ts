@@ -11,7 +11,7 @@ export function textStyle(size: number, color = '#e8d9a0'): Phaser.Types.GameObj
 export function makeButton(
   scene: Phaser.Scene, x: number, y: number, label: string, onClick: () => void, w = 300, h = 58, enabled = true,
 ): Phaser.GameObjects.Container {
-  const bg = scene.add.image(0, 0, 'ui_button').setDisplaySize(w, h);
+  const bg = scene.add.image(0, 0, scene.textures.exists('ui2_button_painted') ? 'ui2_button_painted' : 'ui_button').setDisplaySize(w, h);
   const txt = scene.add.text(0, 0, label, textStyle(24, enabled ? '#e8d9a0' : '#6a6050')).setOrigin(0.5);
   const c = scene.add.container(x, y, [bg, txt]);
   c.setSize(w, h);

@@ -48,14 +48,14 @@ export class Player extends Entity {
   }
 
   /** Smoothly move to a grid point over `ms` (dashes). Returns immediately; `done` runs at the end. */
-  dashTo(gx: number, gy: number, ms: number, done?: () => void, onFrame?: () => void): void {
+  dashTo(gx: number, gy: number, ms: number, done?: () => void, onFrame?: () => void, ease = 'Cubic.easeOut'): void {
     this.path = [];
     this.dashing = true;
     this.anim.squash(0.85, 1.2);
     const sx = this.gx, sy = this.gy;
     const proxy = { t: 0 };
     this.scene.tweens.add({
-      targets: proxy, t: 1, duration: ms, ease: 'Cubic.easeOut',
+      targets: proxy, t: 1, duration: ms, ease,
       onUpdate: () => { this.gx = sx + (gx - sx) * proxy.t; this.gy = sy + (gy - sy) * proxy.t; this.syncPosition(); onFrame?.(); },
       onComplete: () => { this.anim.squash(1.18, 0.82); this.dashing = false; this.gx = gx; this.gy = gy; this.syncPosition(); EventBus.emit('player:moved', { gx, gy }); done?.(); },
     });

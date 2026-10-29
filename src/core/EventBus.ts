@@ -49,6 +49,22 @@ export interface GameEvents {
   'loot:drop': { item: import('../items/types').Item; gx: number; gy: number };
   'boss:engaged': { bossId: string; name: string; hp?: number; maxHp?: number };
   'boss:hp': { bossId?: string; hp: number; maxHp: number };
+  /** Boss poise bar (stagger meter). value drops when hit, regenerates after a delay; at 0 the boss is staggered. */
+  'boss:poise': { bossId?: string; value: number; max: number };
+  /** Hero stamina (throttled ~90 ms). exhausted = 0-stamina state until 25% regenerated. */
+  'player:stamina': { stamina: number; max: number; exhausted?: boolean };
+  /** Heavy-attack charge 0..1 (0 = released / cancelled). */
+  'player:charge': { value: number };
+  'player:parry': undefined;
+  /** Cinematic mode (letterbox): UI hides the HUD while on. */
+  'ui:cinematic': { on: boolean };
+  'player:staggered': undefined;
+  'enemy:staggered': { id: string; defId: string; boss: boolean };
+  // --- raw combat inputs (keyboard now, touch later): the InputController/GameScene turns Intents into these ---
+  'input:dodge': { gx: number; gy: number };
+  'input:heavy': { phase: 'start' | 'release'; gx: number; gy: number; targetId?: string };
+  'input:block': { down: boolean };
+  'input:sprint': { on: boolean };
   'boss:taunt': { bossId?: string; text: string };
   'quest:item': { questId: string; itemKey: string; name: string };
 }

@@ -22,6 +22,8 @@ import { LootManager, monsterLevel } from '../items/LootManager';
 import { buildArea } from '../world/AreaFactory';
 import { Darkness, LIGHT_PROPS, type StaticLight } from '../world/Darkness';
 import { Ambient, type FireSpot } from '../fx/Ambient';
+import { Atmosphere } from '../fx/Atmosphere';
+import { CAMERA } from '../constants';
 import { applyGrade } from '../fx/PostFx';
 import type { Marker, TileMap } from '../world/TileMap';
 import { WorldRenderer } from '../world/WorldRenderer';
@@ -49,9 +51,14 @@ export class GameScene extends Phaser.Scene {
   private darkness!: Darkness;
   private ambientFx?: Ambient;
   /** Camera zoom: default shows more world than 1:1; mouse wheel / setZoomTarget (pinch) changes it. Kept across areas. */
-  static zoomPref = 0.8;
-  static readonly ZOOM_MIN = 0.55;
-  static readonly ZOOM_MAX = 1.25;
+  static zoomPref: number = CAMERA.ZOOM_DEFAULT;
+  static readonly ZOOM_MIN: number = CAMERA.ZOOM_MIN;
+  static readonly ZOOM_MAX: number = CAMERA.ZOOM_MAX;
+  private atmosphere?: Atmosphere;
+  /** Cinematic camera: establishing pan on area entry (introMs counts up) and a boss dolly (dolly.t counts up, -1 = idle). */
+  private introMs = 0;
+  private introVec = { x: 0, y: 0 };
+  private dolly = { t: -1, x: 0, y: 0 };
   private zoomTarget = GameScene.zoomPref;
   private look = { x: 0, y: 0 };
   private lastPos = { x: 0, y: 0 };
@@ -86,7 +93,7 @@ export class GameScene extends Phaser.Scene {
     QuestManager.bindScene(this);
 
     this.lockPortals();
-    this.worldRenderer = new WorldRenderer(this, this.map);
+    this.worldRenderer = new WorldRenderer(this, this.map, this.areaDef.atmo);
     Enemy.areaLevel = enemyAreaLevel(this.tr.areaId, this.floor);
     Enemy.areaStart = this.time.now;
     this.spawnEntities(built.ref.entry);
@@ -102,6 +109,21 @@ export class GameScene extends Phaser.Scene {
     cam.setBounds(-mh - mg, -mg, mw + mh + 2 * mg, (this.map.width + this.map.height) * 32 + 2 * mg);
     cam.setBackgroundColor(this.areaDef.bg ?? '#0e1612');
     this.look = { x: 0, y: 0 };
+    // Establishing pan: start looking toward the area's objective, ease back to the hero while the zoom settles in.
+    this.introMs = 0;
+    const goal = this.map.firstMarker('boss') ?? this.map.firstMarker('dungeon_entrance') ?? this.map.firstMarker('stairs_down') ?? this.map.markersOf('portal')[0];
+    if (goal) {
+      const g = gridToWorld(goal.gx + 0.5, goal.gy + 0.5), sp = gridToWorld(this.player.gx, this.player.gy);
+      const dx = g.x - sp.x, dy = g.y - sp.y, d = Math.hypot(dx, dy) || 1, m = Math.min(d, 380);
+      this.introVec = { x: (dx / d) * m, y: (dy / d) * m };
+    } else this.introVec = { x: 0, y: -160 };
+    this.dolly = { t: -1, x: 0, y: 0 };
+    this.unsub.push(EventBus.on('boss:engaged', ({ bossId }) => {
+      const b = this.enemies.find((e) => e.def.id === bossId);
+      if (!b) return;
+      const dx = b.x - this.player.x, dy = b.y - this.player.y, d = Math.hypot(dx, dy) || 1, m = Math.min(d * 0.5, 240);
+      this.dolly = { t: 0, x: (dx / d) * m, y: (dy / d) * m };
+    }));
     this.lastPos = { x: this.player.x, y: this.player.y };
     applyGrade(this, cam, this.areaDef.grade);
     this.input.on('wheel', this.onWheel, this);
@@ -116,7 +138,8 @@ export class GameScene extends Phaser.Scene {
       lights.push({ x: a.x, y: a.y - 30, radius: r });
       if (p.key === 'torch' || p.key === 'brazier' || p.key === 'campfire') fires.push({ x: a.x, y: a.y - 30, key: p.key });
     }
-    this.ambientFx = new Ambient(this, this.areaDef.fx, fires);
+    this.ambientFx = new Ambient(this, this.areaDef.fx, fires, this.areaDef.atmo.key);
+    this.atmosphere = new Atmosphere(this, this.areaDef);
     this.darkness = new Darkness(this, this.areaDef.ambient, lights);
     this.vfx.setDarkness(this.darkness);
 
@@ -161,6 +184,7 @@ export class GameScene extends Phaser.Scene {
     this.combat?.destroy();
     this.worldRenderer?.destroy();
     this.darkness?.destroy();
+    this.atmosphere?.destroy();
   }
 
   /** W2 portal looks sealed until the W1 gate flag is set. */
@@ -226,6 +250,10 @@ export class GameScene extends Phaser.Scene {
       case 'skill': EventBus.emit('skill:use', { slot: i.slot, gx: i.gx, gy: i.gy, targetId: i.targetId }); break;
       case 'panel': EventBus.emit('ui:togglePanel', { panel: i.panel }); break;
       case 'closePanels': EventBus.emit('ui:closePanels'); break;
+      case 'dodge': EventBus.emit('input:dodge', { gx: i.gx, gy: i.gy }); break;
+      case 'heavy': EventBus.emit('input:heavy', { phase: i.phase, gx: i.gx, gy: i.gy, targetId: i.targetId }); break;
+      case 'block': EventBus.emit('input:block', { down: i.down }); break;
+      case 'sprint': EventBus.emit('input:sprint', { on: i.on }); break;
       case 'menu': EventBus.emit('ui:menu'); break;
     }
   }
@@ -350,6 +378,7 @@ export class GameScene extends Phaser.Scene {
     this.updateCamera(dtMs);
     this.worldRenderer.update(this.cameras.main, this.player);
     this.ambientFx?.update(time, dtMs);
+    this.atmosphere?.update(time, dtMs);
     this.darkness.update(time, this.player.x, this.player.y - 50);
   }
 
@@ -369,8 +398,19 @@ export class GameScene extends Phaser.Scene {
   private updateCamera(dtMs: number): void {
     const cam = this.cameras.main;
     const dt = Math.max(1, Math.min(dtMs, 50));
-    const z = cam.zoom + (this.zoomTarget - cam.zoom) * (1 - Math.exp(-dt / 90));
-    cam.setZoom(Math.abs(z - this.zoomTarget) < 0.0005 ? this.zoomTarget : z);
+    // cinematic envelopes (smoothstep): intro pan 2.8s, boss dolly in 0.6s / hold 1.1s / out 1.2s
+    this.introMs += dt;
+    const ik = Math.min(1, this.introMs / 2800), ie = 1 - ik * ik * (3 - 2 * ik);
+    let dv = 0;
+    if (this.dolly.t >= 0) {
+      this.dolly.t += dt;
+      const t = this.dolly.t, up = Math.min(1, t / 600), down = Math.min(1, Math.max(0, (t - 1700) / 1200));
+      dv = up * up * (3 - 2 * up) * (1 - down * down * (3 - 2 * down));
+      if (t > 2900) this.dolly.t = -1;
+    }
+    const zt = Math.min(CAMERA.ZOOM_MAX * 1.1, this.zoomTarget * (1 - 0.1 * ie) * (1 + 0.1 * dv));
+    const z = cam.zoom + (zt - cam.zoom) * (1 - Math.exp(-dt / 90));
+    cam.setZoom(Math.abs(z - zt) < 0.0005 ? zt : z);
     // look-ahead in the movement direction
     const p = this.player;
     const vx = (p.x - this.lastPos.x) / dt * 1000, vy = (p.y - this.lastPos.y) / dt * 1000;
@@ -380,7 +420,7 @@ export class GameScene extends Phaser.Scene {
     const f = 1 - Math.exp(-dt / 380);
     this.look.x += (vx * k - this.look.x) * f;
     this.look.y += (vy * k - this.look.y) * f;
-    cam.setFollowOffset(-this.look.x, -this.look.y);
+    cam.setFollowOffset(-(this.look.x + this.introVec.x * ie + this.dolly.x * dv), -(this.look.y + this.introVec.y * ie + this.dolly.y * dv));
   }
 
 }

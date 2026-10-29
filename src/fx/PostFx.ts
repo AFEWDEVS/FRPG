@@ -10,6 +10,7 @@ export function applyGrade(scene: Phaser.Scene, cam: Phaser.Cameras.Scene2D.Came
     if (g.vignette > 0) cam.postFX.addVignette(0.5, 0.5, 0.92, g.vignette);
     const cm = cam.postFX.addColorMatrix();
     cm.saturate(g.sat);
+    if (g.contrast) cm.contrast(g.contrast, true);
     cm.multiply([g.tint[0], 0, 0, 0, 0, 0, g.tint[1], 0, 0, 0, 0, 0, g.tint[2], 0, 0, 0, 0, 0, 1, 0], true);
   } catch (e) {
     console.warn('[postfx] unavailable', e);

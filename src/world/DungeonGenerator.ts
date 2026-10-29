@@ -1,5 +1,6 @@
 import { SeededRNG } from '../core/SeededRNG';
 import { AREAS } from '../data/areas';
+import { hasSetPiece } from '../constants';
 import { placePack } from './spawns';
 import { NO_TILE, TileMap } from './TileMap';
 
@@ -134,6 +135,34 @@ export function generateDungeon(id: DungeonId, floor: number, runSeed: number): 
     }
     if (r === farRoom && last) continue;
     placePack(map, rng, def.enemies, cx(r), cy(r) + 1, rng.int(3, 6));
+  }
+
+  // Composition: clustered set pieces (stalagmite groves along walls, cobwebs in corners, hanging chains, bones). Reachability preserved.
+  const free = (x: number, y: number) => map.isWalkable(x, y) && !map.hasPropAt(x, y);
+  const soft = (key: string, x: number, y: number, extra: Partial<{ flipX: boolean; lift: number }> = {}) => {
+    if (hasSetPiece(key) && map.inBounds(x, y) && map.ground[map.idx(x, y)] !== NO_TILE && !map.hasPropAt(x, y)) map.addProp({ key, gx: x, gy: y, w: 1, h: 1, blocks: false, ...extra });
+  };
+  for (const r of rooms) {
+    const boss = r === farRoom && last;
+    if (hasSetPiece('stalagmite') && rng.chance(0.8)) {
+      // a grove hugging one wall of the room
+      const side = rng.int(0, 3);
+      const bx = side === 0 ? r.x : side === 1 ? r.x + r.w - 1 : r.x + rng.int(0, r.w - 1), by = side === 2 ? r.y : side === 3 ? r.y + r.h - 1 : r.y + rng.int(0, r.h - 1);
+      for (let k = 0, n = rng.int(2, 4); k < n * 4 && n > 0; k++) {
+        const x = bx + rng.int(-2, 2), y = by + rng.int(-2, 2);
+        if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h || !free(x, y) || (x === cx(r) && y === cy(r))) continue;
+        tryDecor('stalagmite', x, y); n--;
+      }
+    }
+    if (id === 'd2' && hasSetPiece('arcane_obelisk')) {
+      tryDecor('arcane_obelisk', r.x + 1, r.y + r.h - 2);
+      if (boss) tryDecor('arcane_obelisk', r.x + r.w - 2, r.y + r.h - 2);
+    }
+    if (rng.chance(0.65)) soft('cobweb_corner', r.x, r.y);
+    if (rng.chance(0.5)) soft('cobweb_corner', r.x + r.w - 1, r.y, { flipX: true });
+    if (rng.chance(0.4)) soft('cobweb_corner', r.x, r.y + r.h - 1);
+    if (rng.chance(0.45)) { const x = r.x + rng.int(2, Math.max(2, r.w - 3)); soft('chains_hanging', x, r.y, { lift: 40 }); if (rng.chance(0.5)) soft('chains_hanging', x + 2, r.y, { lift: 40, flipX: true }); }
+    for (let k = rng.int(0, 2); k > 0; k--) soft('bones_large', r.x + rng.int(1, r.w - 2), r.y + rng.int(1, r.h - 2));
   }
   return map;
 }

@@ -18,6 +18,8 @@ export interface InputOptions {
 export class InputController {
   private handlers: ((i: Intent) => void)[] = [];
   private holding = false;
+  private pressEnemy: { id: string; t: number } | null = null;
+  private charging = false;
   private lastHold = 0;
   private keys: Phaser.Input.Keyboard.Key[] = [];
   enabled = true;
@@ -38,8 +40,18 @@ export class InputController {
       for (let n = 1; n <= 6; n++) bind(String(n), () => this.skillAtPointer(n as SkillSlot));
       const panels: [string, PanelId][] = [['I', 'inventory'], ['C', 'character'], ['T', 'skills'], ['Q', 'quests'], ['M', 'map']];
       for (const [k, p] of panels) bind(k, () => this.emit({ type: 'panel', panel: p }));
-      bind('SPACE', () => this.emit({ type: 'closePanels' }));
+      // Space = dodge roll toward the pointer. Esc (menu / closes panels) is the only "close" key now.
+      bind('SPACE', () => { const p = this.scene.input.activePointer; const g = this.pointerGrid(p); this.emit({ type: 'dodge', gx: g.gx, gy: g.gy }); });
       bind('ESC', () => this.emit({ type: 'menu' }));
+      // Shift = block (tap just before a hit = parry). Z = sprint (hold).
+      const hold = (code: string, fn: (down: boolean) => void) => {
+        const k = kb.addKey(code, false);
+        k.on('down', () => { if (this.enabled) fn(true); });
+        k.on('up', () => fn(false));
+        this.keys.push(k);
+      };
+      hold('SHIFT', (down) => this.emit({ type: 'block', down }));
+      hold('Z', (on) => this.emit({ type: 'sprint', on }));
     }
   }
 
@@ -67,9 +79,17 @@ export class InputController {
     if (p.rightButtonDown()) { this.skillAtPointer('right'); return; }
     this.holding = true;
     this.lastHold = 0;
+    this.pressEnemy = null;
+    const hit = this.opts.pick(p.worldX, p.worldY);
+    if (hit && hit.kind === 'enemy') this.pressEnemy = { id: hit.id, t: this.scene.time.now };
     this.dispatchPrimary(p, false);
   }
-  private onUp(p: Phaser.Input.Pointer): void { if (!p.leftButtonDown()) this.holding = false; }
+  private onUp(p: Phaser.Input.Pointer): void {
+    if (p.leftButtonDown()) return;
+    this.holding = false;
+    if (this.charging) { const g = this.pointerGrid(p); this.emit({ type: 'heavy', phase: 'release', gx: g.gx, gy: g.gy }); }
+    this.charging = false; this.pressEnemy = null;
+  }
 
   private dispatchPrimary(p: Phaser.Input.Pointer, held: boolean): void {
     const g = this.pointerGrid(p);
@@ -82,7 +102,14 @@ export class InputController {
   update(time: number): void {
     if (!this.holding || !this.enabled) return;
     const p = this.scene.input.activePointer;
-    if (!p.leftButtonDown()) { this.holding = false; return; }
+    if (!p.leftButtonDown()) { this.holding = false; if (this.charging) { this.charging = false; const g = this.pointerGrid(p); this.emit({ type: 'heavy', phase: 'release', gx: g.gx, gy: g.gy }); } return; }
+    // Hold LMB on an enemy for 280 ms = charge a heavy attack (release to strike).
+    if (!this.charging && this.pressEnemy && this.scene.time.now - this.pressEnemy.t > 280) {
+      this.charging = true;
+      const g = this.pointerGrid(p);
+      this.emit({ type: 'heavy', phase: 'start', gx: g.gx, gy: g.gy, targetId: this.pressEnemy.id });
+    }
+    if (this.charging) return;
     if (time - this.lastHold > 120) {
       this.lastHold = time;
       this.dispatchPrimary(p, true);

@@ -36,6 +36,11 @@ for (const k of VFX_KEYS) imgs.push({ key: `vfx_${k}`, path: `assets/vfx/${k}.pn
 
 export const IMAGE_MANIFEST: ImageEntry[] = imgs;
 
+/** Optional painted minimal-UI art (assets/gen/ui2). Loaded without placeholders: the UI falls back to procedural drawing when a file is missing. Key = "ui2_" + name. */
+export const UI2_MANIFEST: { key: string; path: string }[] = list(
+  'orb_life_small orb_mana_small bar_frame bar_fill_red bar_fill_gold bar_fill_blue slot_round panel_painted button_painted divider',
+).map((k) => ({ key: `ui2_${k}`, path: `${G}/ui2/${k}.png` }));
+
 const A = 'assets/audio';
 const both = (dir: string, k: string) => [`${A}/${dir}/${k}.ogg`, `${A}/${dir}/${k}.mp3`];
 export const MUSIC_KEYS = list('title town world1 dungeon1 world2 dungeon2 boss ending');

@@ -8,8 +8,8 @@ export class Toasts {
   constructor(private scene: Phaser.Scene) {}
 
   push(text: string, color = '#f0e0b0'): void {
-    const t = this.scene.add.text(BASE_W / 2, 170, text, {
-      fontFamily: FONT, fontSize: '20px', color, stroke: '#000000', strokeThickness: 5, backgroundColor: '#00000066', padding: { x: 10, y: 4 }, align: 'center',
+    const t = this.scene.add.text(BASE_W / 2, 150, text, {
+      fontFamily: FONT, fontSize: '17px', color, stroke: '#000000', strokeThickness: 3, backgroundColor: '#0b0807b8', padding: { x: 14, y: 5 }, align: 'center',
     }).setOrigin(0.5).setDepth(800).setAlpha(0);
     this.items.unshift(t);
     if (this.items.length > 5) this.items.pop()?.destroy();
@@ -22,6 +22,6 @@ export class Toasts {
   }
 
   private layout(): void {
-    this.items.forEach((t, i) => t.setY(170 + i * 34));
+    this.items.forEach((t, i) => t.setY(150 + i * 32));
   }
 }

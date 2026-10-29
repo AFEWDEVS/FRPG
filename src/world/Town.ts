@@ -1,3 +1,4 @@
+import { hasSetPiece } from '../constants';
 import { TileMap } from './TileMap';
 
 const N = 32;
@@ -40,6 +41,14 @@ export function buildTown(seed = 0): TileMap {
   for (const [x, y] of [[13, 13], [17, 13], [14, 14], [16, 12], [13, 18], [17, 18], [14, 21], [16, 21], [11, 11], [19, 11], [10, 20], [20, 20], [7, 8], [9, 8], [22, 9], [20, 9], [6, 16], [23, 15], [18, 7], [12, 7]]) prop('flowers', x, y, 1, 1, false);
   for (const [x, y] of [[13, 6], [17, 6], [13, 9], [17, 9], [12, 14], [18, 14], [12, 22], [18, 22], [25, 12], [25, 15], [6, 10], [10, 8], [20, 8]]) prop('torch', x, y, 1, 1, false);
   for (const [x, y] of [[13, 24], [17, 24]]) prop('brazier', x, y);
+  // Set pieces (only when the art exists): heart statue as the plaza centrepiece, festival banners flanking the road, lantern strings over it
+  const sp = (key: string, gx: number, gy: number, w = 1, h = 1, blocks = false, extra: { flipX?: boolean; lift?: number } = {}) => {
+    if (hasSetPiece(key) && !map.hasPropAt(gx, gy)) map.addProp({ key, gx, gy, w, h, blocks, ...extra });
+  };
+  sp('statue_heart', 15, 16, 1, 1, true);
+  for (const y of [5, 9, 18, 22]) { sp('banner_festival', 13, y); sp('banner_festival', 17, y, 1, 1, false, { flipX: true }); }
+  for (const [x, y] of [[14, 7], [14, 20], [10, 14], [20, 14]]) sp('lantern_string', x, y, 2, 1, false, { lift: 120 });
+  sp('banner_festival', 22, 12); sp('banner_festival', 26, 12, 1, 1, false, { flipX: true });
   // Portals
   prop('dungeon_entrance', 15, 2);
   map.addMarker('portal', 15, 2, { to: 'w1', label: 'Bosque de Verdeluna' });

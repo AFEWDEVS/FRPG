@@ -97,7 +97,7 @@ export class SkillPanel extends Panel {
     const lv = this.lvl(d.id);
     const locked = GameState.profile.level < d.reqLevel;
     const g = this.add(s.add.graphics());
-    g.fillStyle(0x0a0706, 0.9).fillRect(x - 34, y - 34, 68, 68).lineStyle(2, lv > 0 ? 0xd8b060 : 0x5a4a34, 1).strokeRect(x - 34, y - 34, 68, 68);
+    g.fillStyle(0x0a0706, 0.9).fillRoundedRect(x - 34, y - 34, 68, 68, 14).lineStyle(1.5, lv > 0 ? 0xd8b060 : 0x5a4a34, 1).strokeRoundedRect(x - 34, y - 34, 68, 68, 14);
     const key = `icon_skill_${d.id}`;
     const img = this.add(s.add.image(x, y, s.textures.exists(key) ? key : 'ui_slot').setDisplaySize(60, 60));
     if (lv === 0) img.setAlpha(locked ? 0.3 : 0.6);

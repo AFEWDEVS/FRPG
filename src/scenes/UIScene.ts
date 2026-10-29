@@ -22,7 +22,7 @@ import { MapPanel } from '../ui/panels/MapPanel';
 import { QuestPanel } from '../ui/panels/QuestPanel';
 import { ShopPanel } from '../ui/panels/ShopPanel';
 import { SkillPanel } from '../ui/panels/SkillPanel';
-import { CELL, itemIcon } from '../ui/theme';
+import { CELL, DISPLAY, itemIcon } from '../ui/theme';
 import { Toasts } from '../ui/Toasts';
 import { Tooltip } from '../ui/Tooltip';
 import { makeButton } from '../ui/widgets';
@@ -121,11 +121,14 @@ export class UIScene extends Phaser.Scene implements UiHost {
     this.boss = new BossBar(this);
     this.toasts = new Toasts(this);
     this.heldC = this.add.container(0, 0).setDepth(20000).setVisible(false);
-    this.areaText = this.add.text(BASE_W / 2, 14, '', { fontFamily: 'Georgia, serif', fontSize: '28px', color: '#d8b060', stroke: '#1a0c08', strokeThickness: 5 }).setOrigin(0.5, 0).setDepth(5);
+    this.areaText = this.add.text(BASE_W / 2, 92, '', { fontFamily: DISPLAY, fontSize: '26px', color: '#e0c486', stroke: '#14080a', strokeThickness: 4 }).setOrigin(0.5, 0).setDepth(5).setLetterSpacing(4).setAlpha(0);
 
     const on = <K extends keyof GameEvents>(e: K, fn: (p: GameEvents[K]) => void) => this.unsub.push(EventBus.on(e, fn));
     on('area:entered', (a) => {
-      this.areaText.setText(a.name);
+      this.areaText.setText(a.name.toUpperCase());
+      this.tweens.killTweensOf(this.areaText);
+      this.areaText.setAlpha(0);
+      this.tweens.add({ targets: this.areaText, alpha: 1, duration: 600, hold: 2600, yoyo: true });
       this.closePanels();
       this.dialogue.hide();
       (this.panels.map as MapPanel).areaName = a.name;
@@ -147,12 +150,13 @@ export class UIScene extends Phaser.Scene implements UiHost {
       on(e, () => this.refreshPanels());
     }
     on('quests:updated', () => this.panels.quests.refresh());
-    on('dialogue:show', (p) => this.dialogue.show(p));
-    on('dialogue:hide', () => this.dialogue.hide());
+    on('dialogue:show', (p) => { this.dialogue.show(p); this.hud.setHidden(true); });
+    on('dialogue:hide', () => { this.dialogue.hide(); this.hud.setHidden(false); });
     on('dialogue:choice', ({ id }) => this.onChoice(id));
     on('boss:engaged', ({ name, hp, maxHp }) => { this.boss.engage(name); if (hp !== undefined && maxHp) this.boss.setHp(hp, maxHp); });
     on('boss:hp', ({ hp, maxHp }) => this.boss.setHp(hp, maxHp));
     on('boss:defeated', () => this.boss.defeat());
+    this.unsub.push(EventBus.on('boss:poise' as never, ((v: { value: number; max: number }) => this.boss.setPoise(v.value, v.max)) as never));
     on('boss:taunt', ({ text }) => this.boss.say(text));
     on('ui:toast', ({ text, color }) => this.toast(text, color));
     on('npc:interact', ({ npcId }) => this.onNpc(npcId));
@@ -184,6 +188,9 @@ export class UIScene extends Phaser.Scene implements UiHost {
     });
     if (GameState.hasProfile) { GameState.emitVitals(); GameState.emitProgress(); this.hud.refresh(); }
   }
+
+  /** Touch hook: make room for a virtual joystick at the bottom-left. */
+  layoutForTouch(on = true): void { this.hud.layoutForTouch(on); }
 
   update(time: number, dtMs: number): void {
     this.hud.update(dtMs);

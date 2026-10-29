@@ -14,7 +14,8 @@ export class ProcAnim {
   private lastHalf = 0;
   private mv = 0;
   private flashUntil = 0;
-  private lunge = { x: 0, y: 0, t: 0, dur: 1 };
+  private lunge = { x: 0, y: 0, t: 0, dur: 1, delay: 0, wind: 1 };
+  private roll_ = { t: 0, dur: 1, dir: 1 };
   private recoil = { x: 0, y: 0, t: 0, dur: 1 };
   private spring = { x: 1, y: 1 };
   private spawnT = 1e9;
@@ -55,15 +56,21 @@ export class ProcAnim {
   squash(sx: number, sy: number): void { this.spring.x = sx; this.spring.y = sy; }
 
   /** Quick lunge toward a screen-space direction (attacks). Also starts the attack sheet animation. */
-  attackLunge(dx: number, dy: number, dur = 160, animMs: number | false = Math.max(dur, 280)): void {
+  attackLunge(dx: number, dy: number, dur = 160, animMs: number | false = Math.max(dur, 280), windupMs = 0): void {
     const l = Math.hypot(dx, dy) || 1;
-    this.lunge = { x: (dx / l) * 14, y: (dy / l) * 7, t: dur, dur };
-    this.spring.x = 0.9; this.spring.y = 1.12;
+    this.lunge = { x: (dx / l) * 14, y: (dy / l) * 7, t: dur, dur, delay: windupMs, wind: Math.max(1, windupMs) };
+    if (windupMs <= 0) { this.spring.x = 0.9; this.spring.y = 1.12; }
     if (this.animator && animMs !== false) {
       if (Math.abs(dy) > 0.01) this.animator.up = dy < 0;
       if (Math.abs(dx) > 0.01) this.setFacingLeft(dx < 0);
       this.animator.playAttack(animMs);
     }
+  }
+
+  /** Dodge roll: low squashed tumble toward a screen-space direction over ms. */
+  roll(dx: number, dy: number, ms: number): void {
+    this.roll_ = { t: ms, dur: ms, dir: dx < 0 ? -1 : 1 };
+    this.spring.x = 1.2; this.spring.y = 0.7;
   }
 
   /** Pop-in with optional dust puffs. */
@@ -161,8 +168,19 @@ export class ProcAnim {
       const p = Math.min(1, this.spawnT / this.spawnDur), e = easeOutBack(p);
       sy *= Math.max(0.01, e); sx *= 0.55 + 0.45 * Math.max(0, e);
     }
-    let ox = 0, oy = 0;
-    if (this.lunge.t > 0) {
+    let ox = 0, oy = 0, rr = 0, rb = 0;
+    if (this.roll_.t > 0) {
+      this.roll_.t -= dtMs;
+      const q = 1 - Math.max(0, this.roll_.t) / this.roll_.dur, sn = Math.sin(q * Math.PI);
+      sy *= 1 - 0.36 * sn; sx *= 1 + 0.2 * sn; rr = this.roll_.dir * 0.75 * sn; rb = -sn * 10;
+    }
+    if (this.lunge.delay > 0) {
+      this.lunge.delay -= dtMs;
+      const q = 1 - Math.max(0, this.lunge.delay) / this.lunge.wind, e = Math.sin(q * Math.PI * 0.5);
+      ox = -this.lunge.x * 0.5 * e; oy = -this.lunge.y * 0.5 * e;
+      sy *= 1 + 0.06 * e; sx *= 1 - 0.05 * e;
+      if (this.lunge.delay <= 0) { this.spring.x = 0.9; this.spring.y = 1.12; }
+    } else if (this.lunge.t > 0) {
       this.lunge.t -= dtMs;
       const p = Math.max(0, this.lunge.t) / this.lunge.dur;
       const f = Math.sin(p * Math.PI);
@@ -174,9 +192,9 @@ export class ProcAnim {
       ox += this.recoil.x * f; oy += this.recoil.y * f;
     }
     const bs = this.baseScale * (A?.scaleMul ?? 1);
-    s.setPosition(ox, bob + oy);
+    s.setPosition(ox, bob + oy + rb);
     s.setScale(bs * sx, bs * sy);
-    s.setRotation(rot);
+    s.setRotation(rot + rr);
     const lift = Math.min(1, Math.abs(bob) / 6.5);
     const sq = 1 + (sp.x - 1) * 0.5;
     this.shadow.setScale((1 - lift * 0.2) * sq, (1 - lift * 0.2) * sq);

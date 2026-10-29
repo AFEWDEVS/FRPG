@@ -92,7 +92,7 @@ export abstract class Entity extends Phaser.GameObjects.Container {
 
   protected addLabel(text: string, color = '#ffffff'): void {
     this.label = this.scene.add.text(0, -this.sprite.displayHeight - 10, text, {
-      fontFamily: 'Georgia, serif', fontSize: '14px', color, stroke: '#000', strokeThickness: 3,
+      fontFamily: 'Georgia, serif', fontSize: '12px', color, stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5, 1);
     this.add(this.label);
   }

@@ -10,3 +10,9 @@ Requires Python 3.11 + Pillow + numpy + scipy, and codex-cli with `image_generat
 - `mkreadme.py` - rewrites `public/assets/gen/README.md`.
 
 Sprite target heights are in `build.py` (CHARS / PROPS). Portraits attach the final character PNG with `-i` for consistency.
+
+## v2 painterly world pipeline
+- `jobs2.py` - painterly prompts (STYLE2) for tiles, walls, prop sheets (SHEETS: id -> cols, rows, [(key, target_height, desc)]), atmo, ui. Raws go to `_raw/v2/<cat>/`.
+- `gen2.py` - same as gen.py but for jobs2 (`python gen2.py "a,b,c" "d,e"`; 4 codex processes in parallel; existing raws skipped).
+- `build2.py [tiles walls props atmo ui]` - tiles -> 512x256 diamonds (+6x6 montages in `_raw/previews/v2/`), walls -> 512 wide, props sliced from sheets and fitted to heights (about 1.6x the v1 heights), atmo (luminance -> alpha), ui2.
+- Characters are NOT part of v2 (still built by build.py / anim_*.py).

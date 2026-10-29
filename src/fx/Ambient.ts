@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { FxKind } from '../data/areas';
+import { atmoTex } from './Atmosphere';
 
 type R = [number, number];
 interface Emitter {
@@ -42,11 +43,11 @@ const D = 800000;
 export class Ambient {
   private ps: P[] = [];
   private flames: { img: Phaser.GameObjects.Image; x: number; y: number; vy: number; age: number; life: number; sz: number; ph: number; on: boolean }[] = [];
-  private fires: { spot: FireSpot; glow: Phaser.GameObjects.Image; acc: number }[] = [];
+  private fires: { spot: FireSpot; glow: Phaser.GameObjects.Image; pool: Phaser.GameObjects.Image; acc: number }[] = [];
   private clouds: { img: Phaser.GameObjects.Image; x: number; y: number; w: number }[] = [];
   private seeded = false;
 
-  constructor(private scene: Phaser.Scene, kind: FxKind, spots: FireSpot[]) {
+  constructor(private scene: Phaser.Scene, kind: FxKind, spots: FireSpot[], keyLight = 0xff9a3a) {
     for (const e of E[kind]) {
       for (let i = 0; i < e.n; i++) {
         const img = scene.add.image(0, 0, e.tex).setDepth(D).setVisible(false);
@@ -57,7 +58,10 @@ export class Ambient {
     for (const s of spots) {
       const glow = scene.add.image(s.x, s.y, 'light_mask').setDepth(D - 10).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff9a3a).setVisible(false);
       glow.setScale(260 / glow.width);
-      this.fires.push({ spot: s, glow, acc: Math.random() });
+      // painted light pool lying on the ground (additive, under props) + the soft airborne glow above
+      const pool = scene.add.image(s.x, s.y + 26, atmoTex(scene, 'light_pool')).setDepth(0.6).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffa850).setVisible(false);
+      void keyLight;
+      this.fires.push({ spot: s, glow, pool, acc: Math.random() });
     }
     if (spots.length) for (let i = 0; i < 40; i++) this.flames.push({ img: scene.add.image(0, 0, 'vfx_flare').setDepth(D - 5).setBlendMode(Phaser.BlendModes.ADD).setVisible(false), x: 0, y: 0, vy: 0, age: 0, life: 1, sz: 1, ph: 0, on: false });
     if (kind === 'town' || kind === 'forest' || kind === 'ember') {
@@ -120,10 +124,12 @@ export class Ambient {
     for (const f of this.fires) {
       const s = f.spot;
       const inView = s.x > left && s.x < right && s.y > top && s.y < bot + 120;
-      f.glow.setVisible(inView);
+      f.glow.setVisible(inView); f.pool.setVisible(inView);
       if (!inView) continue;
       const fl = 0.8 + Math.sin(time / 90 + s.x) * 0.1 + Math.sin(time / 37 + s.y) * 0.1;
-      f.glow.setPosition(s.x, s.y + 20).setAlpha(0.3 * fl).setScale((240 + 40 * fl) / f.glow.width);
+      f.glow.setPosition(s.x, s.y + 20).setAlpha(0.2 * fl).setScale((200 + 40 * fl) / f.glow.width);
+      const pw = (s.key === 'campfire' ? 340 : 420) * (0.95 + 0.05 * fl);
+      f.pool.setPosition(s.x, s.y + 28).setDisplaySize(pw, pw * 0.5).setAlpha(0.55 * fl);
       f.acc += dt * 18;
       while (f.acc >= 1) {
         f.acc -= 1;
@@ -147,7 +153,7 @@ export class Ambient {
 
   destroy(): void {
     for (const p of this.ps) p.img.destroy();
-    for (const f of this.fires) f.glow.destroy();
+    for (const f of this.fires) { f.glow.destroy(); f.pool.destroy(); }
     for (const q of this.flames) q.img.destroy();
     for (const c of this.clouds) c.img.destroy();
     this.ps = []; this.fires = []; this.flames = []; this.clouds = [];

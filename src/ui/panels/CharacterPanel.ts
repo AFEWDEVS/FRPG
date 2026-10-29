@@ -16,8 +16,8 @@ export class CharacterPanel extends Panel {
     // XP bar
     const next = xpForLevel(p.level);
     const g = this.add(this.host.add.graphics());
-    g.fillStyle(0x1c1410).fillRect(30, 104, this.w - 60, 12).fillStyle(0xd8a030).fillRect(30, 104, (this.w - 60) * Math.min(1, p.xp / next), 12)
-      .lineStyle(1, 0x6a5a40).strokeRect(30, 104, this.w - 60, 12);
+    g.fillStyle(0x1c1410).fillRoundedRect(30, 104, this.w - 60, 12, 6).fillStyle(0xd8a030).fillRoundedRect(30, 104, Math.max(12, (this.w - 60) * Math.min(1, p.xp / next)), 12, 6)
+      .lineStyle(1, 0x8a6e44).strokeRoundedRect(30, 104, this.w - 60, 12, 6);
     this.text(this.w / 2, 110, `Experiencia ${p.xp} / ${next}`, 11, '#ffffff', 0.5, 0.5);
 
     // attributes

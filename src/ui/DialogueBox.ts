@@ -6,6 +6,7 @@ import { NPC_COLORS } from '../data/npcs';
 import type { UiHost } from './Panel';
 import { RichText } from './RichText';
 import { FONT } from './widgets';
+import { paintedPanel } from './theme';
 
 const W = 1000, H = 190;
 const PORT = 200;
@@ -21,7 +22,7 @@ const VOICES: Record<string, Voice> = {
 
 export interface DialogueBoxOpts { bottom?: number; }
 
-/** Ragnarok-style dialogue: stone/parchment frame, nameplate, sliding portrait, rich typewriter, choice buttons. */
+/** Dialogue: painted dark frame, nameplate, sliding portrait, rich typewriter, choice buttons. */
 export class DialogueBox {
   private c: Phaser.GameObjects.Container;
   private body: Phaser.GameObjects.Container;
@@ -45,7 +46,7 @@ export class DialogueBox {
 
   constructor(private scene: Phaser.Scene & UiHost, opts: DialogueBoxOpts = {}) {
     this.X = (BASE_W - W) / 2;
-    this.Y = BASE_H - (opts.bottom ?? 118) - H - 6;
+    this.Y = BASE_H - (opts.bottom ?? 28) - H - 6;
     this.c = scene.add.container(this.X, this.Y).setDepth(900).setVisible(false);
     this.drawFrame();
     this.body = scene.add.container(0, 0);
@@ -66,27 +67,8 @@ export class DialogueBox {
   }
 
   private drawFrame(): void {
-    const s = this.scene;
-    const g = s.add.graphics();
-    // drop shadow + stone base
-    g.fillStyle(0x000000, 0.45).fillRoundedRect(6, 10, W, H, 14);
-    g.fillStyle(0x1c1410, 0.97).fillRoundedRect(0, 0, W, H, 14);
-    this.c.add(g);
-    if (s.textures.exists('ui_panel_stone')) this.c.add(s.add.image(W / 2, H / 2, 'ui_panel_stone').setDisplaySize(W, H).setTint(0x6a5a4a).setAlpha(0.8));
-    const g2 = s.add.graphics();
-    // parchment inset
-    g2.fillStyle(0xe6d3a4, 1).fillRoundedRect(14, 14, W - 28, H - 28, 8);
-    g2.fillStyle(0xb89c68, 0.25).fillRect(14, H - 54, W - 28, 40);
-    g2.lineStyle(3, 0x4a3420, 1).strokeRoundedRect(14, 14, W - 28, H - 28, 8);
-    g2.lineStyle(2, 0xc8a050, 1).strokeRoundedRect(4, 4, W - 8, H - 8, 12);
-    g2.lineStyle(1, 0x7a5a2a, 1).strokeRoundedRect(9, 9, W - 18, H - 18, 9);
-    // corner studs
-    g2.fillStyle(0xe8c070, 1);
-    for (const [x, y] of [[8, 8], [W - 8, 8], [8, H - 8], [W - 8, H - 8]]) { g2.fillCircle(x, y, 6); g2.lineStyle(2, 0x5a3a14, 1).strokeCircle(x, y, 6); }
-    this.c.add(g2);
-    if (s.textures.exists('ui_parchment')) this.c.add(s.add.image(W / 2, H / 2, 'ui_parchment').setDisplaySize(W - 28, H - 28).setAlpha(0.35).setBlendMode(Phaser.BlendModes.MULTIPLY));
+    this.c.add(paintedPanel(this.scene, W, H, 0.9));
   }
-
   covers(px: number, py: number): boolean {
     return this.visible && px >= this.X && px <= this.X + W && py >= this.Y - 150 && py <= this.Y + H;
   }
@@ -108,7 +90,7 @@ export class DialogueBox {
     const nameT = s.add.text(0, 0, p.speaker, { fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color, stroke: '#1a0c08', strokeThickness: 4 }).setOrigin(0, 0.5);
     const pw = Math.max(150, nameT.width + 44);
     const plate = s.add.graphics();
-    plate.fillStyle(0x1a100a, 1).fillRoundedRect(0, -16, pw, 34, 8).lineStyle(3, colNum, 1).strokeRoundedRect(0, -16, pw, 34, 8);
+    plate.fillStyle(0x1a100a, 1).fillRoundedRect(0, -16, pw, 34, 8).lineStyle(1.5, colNum, 0.9).strokeRoundedRect(0, -16, pw, 34, 8);
     plate.fillStyle(colNum, 1).fillCircle(14, 1, 4);
     nameT.setPosition(26, 1);
     const plateC = s.add.container(250, -6, [plate, nameT]);
@@ -128,7 +110,7 @@ export class DialogueBox {
       this.portC.add(im);
     }
     const pb = s.add.graphics();
-    pb.lineStyle(5, colNum, 1).strokeRoundedRect(-PORT / 2, -PORT / 2, PORT, PORT, 14).lineStyle(2, 0x1a0c08, 1).strokeRoundedRect(-PORT / 2 - 3, -PORT / 2 - 3, PORT + 6, PORT + 6, 16);
+    pb.lineStyle(2.5, colNum, 0.9).strokeRoundedRect(-PORT / 2, -PORT / 2, PORT, PORT, 14);
     this.portC.add(pb);
     this.body.add(this.portC);
     if (who !== this.lastWho || !this.visible) {
@@ -144,7 +126,7 @@ export class DialogueBox {
     this.lastWho = who;
 
     // text
-    this.rich = new RichText(s, 250, 36, { size: 21, color: '#2a1608', width: W - 290, lineSpacing: 5 });
+    this.rich = new RichText(s, 250, 36, { size: 21, color: '#efe3c6', width: W - 290, lineSpacing: 5 });
     this.rich.set(p.text);
     this.body.add(this.rich.c);
     this.revealed = 0;
@@ -187,7 +169,7 @@ export class DialogueBox {
     if (!this.choices.length) return;
     const multi = this.choices.length > 1;
     if (!multi) {
-      const hint = s.add.text(W - 40, H - 30, this.choices[0].id === '__end' ? 'Cerrar  ▸' : 'Continuar  ▾', { fontFamily: FONT, fontSize: '15px', color: '#6a4a2a', fontStyle: 'italic' }).setOrigin(1, 0.5);
+      const hint = s.add.text(W - 40, H - 30, this.choices[0].id === '__end' ? 'Cerrar  ▸' : 'Continuar  ▾', { fontFamily: FONT, fontSize: '15px', color: '#b89a68', fontStyle: 'italic' }).setOrigin(1, 0.5);
       this.body.add(hint);
       s.tweens.add({ targets: hint, alpha: 0.35, yoyo: true, repeat: -1, duration: 600 });
       return;

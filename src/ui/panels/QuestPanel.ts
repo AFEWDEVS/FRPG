@@ -31,7 +31,7 @@ export class QuestPanel extends Panel {
     for (const q of quests) {
       const active = q.id === this.sel;
       const g = this.add(s.add.graphics());
-      g.fillStyle(active ? 0x3a2c1c : 0x17100c, 0.9).fillRect(24, y, this.w - 48, 28).lineStyle(1, active ? 0xd8b060 : 0x4a3a28).strokeRect(24, y, this.w - 48, 28);
+      g.fillStyle(active ? 0x3a2c1c : 0x17100c, 0.9).fillRoundedRect(24, y, this.w - 48, 28, 6).lineStyle(1, active ? 0xd8b060 : 0x4a3a28).strokeRoundedRect(24, y, this.w - 48, 28, 6);
       this.text(34, y + 14, `${q.done ? '✔ ' : ''}${q.title}`, 15, q.done ? '#70c070' : active ? COL.gold : COL.text, 0, 0.5);
       const z = this.add(s.add.zone(this.w / 2, y + 14, this.w - 48, 28).setInteractive({ useHandCursor: true }));
       z.on('pointerdown', () => { this.host.consumeClick(); this.sel = q.id; this.refresh(); });

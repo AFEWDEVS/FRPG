@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
-import { ISO, PROP_SCALE } from '../constants';
+import { ISO, PROP_H, tileScale } from '../constants';
+import type { AtmoDef } from '../data/areas';
+import { atmoTex } from '../fx/Atmosphere';
 import { cellCenterWorld, GROUND_DEPTH, gridToWorld, worldToGrid } from '../iso/iso';
 import { CORNER_DIRS, EDGE_DIRS, familyOf, isLiquid, priorityOf, Terrain } from './Terrain';
 import { NO_TILE, type PropInst, type TileMap } from './TileMap';
@@ -13,6 +15,7 @@ const SWAY: Record<string, number> = {
 
 /** Cells drawn beyond the playable map so no void is ever visible, even at min zoom. */
 const BORDER = 36;
+const NO_SHADOW = new Set(['bridge_wood', 'banner_festival', 'lantern_string', 'chains_hanging', 'cobweb_corner', 'ruin_arch', 'torch', 'brazier', 'waypoint']);
 const hash2 = (i: number, j: number): number => { let h = (i * 374761393 + j * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
 const BORDER_PROPS_W1 = ['tree_oak_1', 'tree_oak_2', 'tree_pine', 'tree_pine', 'bush', 'rock_1'];
 const BORDER_PROPS_W2 = ['dead_tree', 'obsidian_spire', 'ruins_pillar', 'lava_rock', 'rock_1', 'crystal'];
@@ -38,8 +41,11 @@ export class WorldRenderer {
   private readonly wallMass: boolean;
   private readonly bProto: string[];
   private readonly bGroundKey: string;
+  private shadows = new Map<object, Img>();
+  private scaleCache = new Map<string, number>();
+  private camMid = { x: 0, y: 0 };
 
-  constructor(private scene: Phaser.Scene, private map: TileMap) {
+  constructor(private scene: Phaser.Scene, private map: TileMap, private atmo?: AtmoDef) {
     this.terrain = new Terrain(scene);
     this.decals = this.terrain.decalKeys();
     this.prebake();
@@ -61,10 +67,40 @@ export class WorldRenderer {
     return { x: c.x, y: c.y + half * 0.5 };
   }
 
+  /** World scale for a prop so it ends up PROP_H[key] px tall whatever the texture resolution (falls back to 0.5x for unknown keys). */
+  private propScale(key: string): number {
+    let k = this.scaleCache.get(key);
+    if (k === undefined) {
+      const h = this.scene.textures.exists(key) ? this.scene.textures.get(key).getSourceImage().height : 256;
+      k = (PROP_H[key] ?? h * ISO.ART_SCALE) / h;
+      this.scaleCache.set(key, k);
+    }
+    return k;
+  }
+  private wallScale(): number {
+    const k = this.map.wallKey;
+    return tileScale(this.scene.textures.exists(k) ? this.scene.textures.get(k).getSourceImage().width : 256);
+  }
+
+  /** Painted multiply shadow blob on the ground (static; pooled through the visible list). */
+  private blob(owner: object, x: number, y: number, w: number, h: number, alpha: number): Img | undefined {
+    if (!this.atmo) return undefined;
+    let b = this.shadows.get(owner);
+    if (!b) {
+      b = this.scene.add.image(x, y, atmoTex(this.scene, 'shadow_blob')).setDisplaySize(w, h).setDepth(GROUND_DEPTH + 0.5)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY).setTintFill(this.atmo.shadowColor === 0 ? 0x101018 : 0x1a2038).setAlpha(alpha);
+      this.shadows.set(owner, b);
+    }
+    b.setVisible(true);
+    this.visible.push(b);
+    return b;
+  }
+
   spriteFor(p: PropInst): Img | undefined { return this.propSprites.get(p); }
 
   update(cam: Phaser.Cameras.Scene2D.Camera, focus?: { x: number; y: number }): void {
     this.focus = focus;
+    this.camMid = { x: cam.midPoint.x, y: cam.midPoint.y };
     for (const s of this.visible) s.setVisible(false);
     this.visible.length = 0;
     this.visFluids.length = 0;
@@ -87,7 +123,10 @@ export class WorldRenderer {
         if (cx < rl || cx > rr || cy < rt || cy > rb) continue;
         if (i < 0 || j < 0 || i >= m.width || j >= m.height) { this.showBorder(i, j); continue; }
         const n = m.idx(i, j);
-        if (m.wall[n]) this.show(this.walls, n, () => this.makeWall(i, j));
+        if (m.wall[n]) {
+          this.show(this.walls, n, () => this.makeWall(i, j));
+          if (this.atmo) { const c = cellCenterWorld(i, j); this.blob(this.walls.get(n)!, c.x, c.y + 10, ISO.TILE_W * 2.1, ISO.TILE_H * 1.7, 0.5 * this.atmo.shadowAlpha); }
+        }
         else if (m.ground[n] !== NO_TILE) {
           this.show(this.ground, n, () => this.makeGround(i, j, n));
           const dc = this.decor.get(n);
@@ -122,7 +161,7 @@ export class WorldRenderer {
       let w = this.bProps.get(k);
       if (!w) {
         const c = cellCenterWorld(i, j), y = c.y + ISO.TILE_H / 2;
-        w = this.scene.add.image(c.x, y, m.wallKey).setOrigin(0.5, 1).setScale(ISO.ART_SCALE).setDepth(y);
+        w = this.scene.add.image(c.x, y, m.wallKey).setOrigin(0.5, 1).setScale(this.wallScale()).setDepth(y);
         const sh = Math.round(255 * Math.max(0.2, fog * 0.8));
         w.setTint(Phaser.Display.Color.GetColor(sh, sh, sh));
         this.bProps.set(k, w);
@@ -136,7 +175,7 @@ export class WorldRenderer {
       const key = d <= 2 ? this.bProto[(r * 3) | 0] : this.bProto[(r * this.bProto.length) | 0];
       const a = WorldRenderer.propAnchor({ key, gx: i, gy: j, w: 1, h: 1, blocks: true });
       s = this.scene.add.image(a.x + (hash2(j, i) - 0.5) * 30, a.y, key).setOrigin(0.5, 1)
-        .setScale(ISO.ART_SCALE * (PROP_SCALE[key] ?? 1) * (0.9 + hash2(i + 7, j) * 0.4)).setDepth(a.y);
+        .setScale(this.propScale(key) * (0.9 + hash2(i + 7, j) * 0.4)).setDepth(a.y);
       if (hash2(i, j + 3) < 0.5) s.setFlipX(true);
       const sh = Math.round(255 * Math.max(0.3, fog));
       s.setTint(Phaser.Display.Color.GetColor(sh, sh, sh));
@@ -176,8 +215,9 @@ export class WorldRenderer {
   private showProp(p: PropInst): void {
     let s = this.propSprites.get(p);
     if (!s) {
+      if (!this.scene.textures.exists(p.key)) return; // art not available (yet): draw nothing rather than a placeholder box
       const a = WorldRenderer.propAnchor(p);
-      s = this.scene.add.image(a.x, a.y, p.key).setOrigin(0.5, 1).setScale(ISO.ART_SCALE * (PROP_SCALE[p.key] ?? 1) * (p.scale ?? 1)).setDepth(a.y);
+      s = this.scene.add.image(a.x, a.y - (p.lift ?? 0), p.key).setOrigin(0.5, 1).setScale(this.propScale(p.key) * (p.scale ?? 1)).setDepth(a.y);
       if (p.flipX) s.setFlipX(true);
       if (p.tint !== undefined) s.setTint(p.tint);
       this.propSprites.set(p, s);
@@ -192,6 +232,16 @@ export class WorldRenderer {
     }
     s.setVisible(true);
     this.visible.push(s);
+    const a = WorldRenderer.propAnchor(p), ph = PROP_H[p.key] ?? 0;
+    if (this.atmo && ph >= 90 && !NO_SHADOW.has(p.key)) {
+      const d = this.atmo.shadowDir, w = Math.max(p.w * ISO.TILE_W * 0.9, s.displayWidth * 0.75);
+      this.blob(p, a.x + d[0] * ph * 0.28, a.y - 6 + d[1] * ph * 0.14, w * 1.25, w * 0.62, this.atmo.shadowAlpha);
+    }
+    // subtle foreground parallax: tall props in the lower half of the view drift a touch outward from the view centre (camera-tilt feel)
+    if (ph >= 150 && !p.lift) {
+      const f = Phaser.Math.Clamp((a.y - this.camMid.y) / 260, 0, 1);
+      s.x = a.x + (a.x - this.camMid.x) * 0.04 * f;
+    }
     const amp = SWAY[p.key];
     if (amp) this.visSway.push({ s, p, amp });
   }
@@ -287,10 +337,12 @@ export class WorldRenderer {
   private makeWall(i: number, j: number): Img {
     const c = cellCenterWorld(i, j);
     const y = c.y + ISO.TILE_H / 2;
-    return this.scene.add.image(c.x, y, this.map.wallKey).setOrigin(0.5, 1).setScale(ISO.ART_SCALE).setDepth(y);
+    return this.scene.add.image(c.x, y, this.map.wallKey).setOrigin(0.5, 1).setScale(this.wallScale()).setDepth(y);
   }
 
   destroy(): void {
+    for (const s of this.shadows.values()) s.destroy();
+    this.shadows.clear();
     for (const s of [...this.ground.values(), ...this.walls.values(), ...this.propSprites.values(), ...this.bGround.values(), ...this.bProps.values()]) s.destroy();
     for (const a of this.decor.values()) for (const o of a) o.destroy();
     this.decor.clear();

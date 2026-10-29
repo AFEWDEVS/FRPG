@@ -20,6 +20,8 @@ export interface PropInst {
   flipX?: boolean;
   tint?: number;
   scale?: number;
+  /** Draw this many world px above the anchor (hanging props: lanterns, chains). */
+  lift?: number;
 }
 
 export const NO_TILE = 255;
@@ -35,6 +37,8 @@ export class TileMap {
   groundKeys: string[] = [];
   groundSolid: boolean[] = [];
   wallKey = '';
+  /** Liquid cells made walkable by a bridge. */
+  readonly bridged = new Set<number>();
 
   constructor(public readonly width: number, public readonly height: number, public readonly seed: number) {
     this.ground = new Uint8Array(width * height).fill(NO_TILE);
@@ -56,7 +60,7 @@ export class TileMap {
     if (!this.inBounds(i, j)) return false;
     const n = j * this.width + i;
     const g = this.ground[n];
-    return g !== NO_TILE && !this.wall[n] && !this.blocked[n] && !this.groundSolid[g];
+    return g !== NO_TILE && !this.wall[n] && !this.blocked[n] && (!this.groundSolid[g] || this.bridged.has(n));
   };
 
   addProp(p: PropInst): void {

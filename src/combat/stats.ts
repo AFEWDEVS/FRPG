@@ -21,6 +21,7 @@ export interface DerivedStats {
   lifeRegen: number; manaRegen: number; lifeSteal: number;
   magicFind: number; goldFind: number;
   allSkills: number;
+  maxStamina: number; staminaRegen: number;
 }
 
 export const RES_CAP = 75;
@@ -78,6 +79,8 @@ export function computeDerived(src: StatSource): DerivedStats {
     magicFind: m('magicFind'),
     goldFind: m('goldFind'),
     allSkills: m('allSkills'),
+    maxStamina: Math.round(50 + dex * 0.8 + vit * 0.6 + (eq.armor + m('armor')) * 0.12 + (lvl - 1) * 1.5),
+    staminaRegen: 24 + dex * 0.12,
   };
 }
 
@@ -95,6 +98,7 @@ export function statRows(d: DerivedStats): { label: string; value: string }[] {
     { label: 'Vel. de movimiento', value: `${f(d.moveSpeed * 100)}%` },
     { label: 'Prob. crítico', value: `${d.critChance.toFixed(1)}%` },
     { label: 'Res. fuego', value: `${f(d.fireRes)}%` }, { label: 'Res. frío', value: `${f(d.coldRes)}%` }, { label: 'Res. rayo', value: `${f(d.lightRes)}%` },
+    { label: 'Aguante', value: f(d.maxStamina) },
     { label: 'Regen. vida', value: `${d.lifeRegen.toFixed(1)}/s` }, { label: 'Regen. maná', value: `${d.manaRegen.toFixed(1)}/s` },
     { label: 'Robo de vida', value: `${f(d.lifeSteal)}%` },
   ];

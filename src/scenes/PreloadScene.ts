@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { animMetaKey, animSheetKey, isValidMeta } from '../anim/CharacterAnimator';
-import { ANIM_DIR, AUDIO_MANIFEST, CHAR_KEYS, IMAGE_MANIFEST } from '../assets/manifest';
+import { ANIM_DIR, AUDIO_MANIFEST, CHAR_KEYS, IMAGE_MANIFEST, UI2_MANIFEST } from '../assets/manifest';
 import { ensurePlaceholders } from '../assets/placeholders';
 import { AudioManager } from '../audio/AudioManager';
-import { BASE_H, BASE_W } from '../constants';
+import { allowSetPiece, ATMO_NAMES, BASE_H, BASE_W, SETPIECE_KEYS } from '../constants';
 import { S } from '../data/strings';
 import { textStyle } from '../ui/widgets';
 
@@ -24,11 +24,15 @@ export class PreloadScene extends Phaser.Scene {
       bar.clear().fillStyle(0x9a1c14).fillRect(cx - 298, cy - 12, 596 * p, 24);
       bar.fillStyle(0xd8503a, 0.5).fillRect(cx - 298, cy - 12, 596 * p, 8);
     });
-    this.load.on('loaderror', (f: Phaser.Loader.File) => { if (!f.key.startsWith('anim') && !f.key.startsWith('fx_')) this.failed.push(f.key); });
+    this.load.on('loaderror', (f: Phaser.Loader.File) => { if (!f.key.startsWith('anim') && !f.key.startsWith('fx_') && !(SETPIECE_KEYS as readonly string[]).includes(f.key)) this.failed.push(f.key); });
 
     for (const e of IMAGE_MANIFEST) this.load.image(e.key, e.path);
+    for (const e of UI2_MANIFEST) this.load.image(e.key, e.path);
     this.load.image('fx_cast_circle', 'assets/gen/fx/cast_circle.png');
     this.load.spritesheet('fx_levelup_angel', 'assets/gen/fx/levelup_angel.png', { frameWidth: 192, frameHeight: 192 });
+    // Optional art: set-piece props + atmosphere overlays. Missing files are fine (generators skip set pieces, Atmosphere draws procedural fallbacks).
+    for (const k of SETPIECE_KEYS) this.load.image(k, `assets/gen/props/${k}.png`);
+    for (const k of ATMO_NAMES) this.load.image(`fx_atmo_${k}`, `assets/gen/atmo/${k}.png`);
     for (const a of AUDIO_MANIFEST) this.load.audio(a.key, a.urls);
     // Optional animation sheets: many do not exist yet, a failed meta file is simply ignored.
     for (const k of CHAR_KEYS) this.load.json(animMetaKey(k), `${ANIM_DIR}/${k}.json`);
@@ -40,6 +44,7 @@ export class PreloadScene extends Phaser.Scene {
     if (this.textures.exists('fx_levelup_angel') && !this.anims.exists('levelup_angel')) {
       this.anims.create({ key: 'levelup_angel', frames: this.anims.generateFrameNumbers('fx_levelup_angel', { start: 0, end: 5 }), frameRate: 12, repeat: 1 });
     }
+    for (const k of SETPIECE_KEYS) if (this.textures.exists(k)) allowSetPiece(k);
     AudioManager.init(this.game);
     this.loadAnimSheets();
   }

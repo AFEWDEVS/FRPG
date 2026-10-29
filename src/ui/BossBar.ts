@@ -1,42 +1,43 @@
 import Phaser from 'phaser';
 import { BASE_W } from '../constants';
-import { FONT } from './widgets';
+import { DISPLAY } from './theme';
 
-const BW = 560, BH = 18;
+const BW = 520, BH = 8, PW = 360, PH = 3;
 
-/** Top-centre boss health bar with name, lagging damage trail and taunt bubbles. */
+/** Slim top-centre boss bar: name in the display face, health with a trailing chip, poise line beneath, taunt bubbles. */
 export class BossBar {
   private c: Phaser.GameObjects.Container;
   private g: Phaser.GameObjects.Graphics;
   private name: Phaser.GameObjects.Text;
   private taunt: Phaser.GameObjects.Text;
-  private hp = 1; private max = 1; private lag = 1; private frac = 1;
+  private frac = 1; private lag = 1; private poise = 1; private poiseMax = 0;
   active = false;
   private defeated = false;
 
   constructor(private scene: Phaser.Scene) {
     this.g = scene.add.graphics();
-    this.name = scene.add.text(0, -8, '', { fontFamily: FONT, fontSize: '24px', color: '#e8c070', stroke: '#1a0408', strokeThickness: 5 }).setOrigin(0.5, 1);
-    this.taunt = scene.add.text(0, 40, '', { fontFamily: FONT, fontSize: '20px', color: '#ffffff', fontStyle: 'italic', stroke: '#300808', strokeThickness: 5, align: 'center', wordWrap: { width: 620 } }).setOrigin(0.5, 0).setAlpha(0);
-    this.c = scene.add.container(BASE_W / 2, 84, [this.g, this.name, this.taunt]).setDepth(300).setVisible(false);
+    this.name = scene.add.text(0, -4, '', { fontFamily: DISPLAY, fontSize: '21px', color: '#ecd29a', stroke: '#14080a', strokeThickness: 4 }).setOrigin(0.5, 1).setLetterSpacing(3);
+    this.taunt = scene.add.text(0, 40, '', { fontFamily: DISPLAY, fontSize: '18px', color: '#f4ead2', fontStyle: 'italic', stroke: '#200808', strokeThickness: 4, align: 'center', wordWrap: { width: 620 } }).setOrigin(0.5, 0).setAlpha(0);
+    this.c = scene.add.container(BASE_W / 2, 44, [this.g, this.name, this.taunt]).setDepth(300).setVisible(false);
   }
 
   engage(name: string): void {
     this.active = true; this.defeated = false;
-    this.name.setText(name);
-    this.hp = this.max = this.lag = this.frac = 1;
+    this.name.setText(name.toUpperCase());
+    this.frac = this.lag = 1; this.poise = 1; this.poiseMax = 0;
     this.c.setVisible(true).setAlpha(0);
     this.scene.tweens.add({ targets: this.c, alpha: 1, duration: 500 });
     this.draw();
   }
 
-  setHp(hp: number, max: number): void { this.hp = hp; this.max = max; this.frac = Phaser.Math.Clamp(hp / Math.max(1, max), 0, 1); }
+  setHp(hp: number, max: number): void { this.frac = Phaser.Math.Clamp(hp / Math.max(1, max), 0, 1); }
+  setPoise(value: number, max: number): void { this.poiseMax = max; this.poise = Phaser.Math.Clamp(value / Math.max(1, max), 0, 1); }
 
   defeat(): void {
     if (!this.active) return;
     this.defeated = true;
     this.frac = 0;
-    this.name.setText(`${this.name.text} - ¡Derrotado!`);
+    this.name.setText(`${this.name.text} — DERROTADO`);
     this.scene.tweens.add({ targets: this.c, alpha: 0, delay: 2200, duration: 800, onComplete: () => { this.c.setVisible(false); this.active = false; } });
   }
 
@@ -56,18 +57,23 @@ export class BossBar {
   }
 
   private draw(): void {
-    const g = this.g.clear(), x = -BW / 2;
-    g.fillStyle(0x000000, 0.55).fillRect(x - 10, -4, BW + 20, BH + 8);
-    g.fillStyle(0x1a0606, 1).fillRect(x, 0, BW, BH);
-    g.fillStyle(0xe8c8a0, 0.85).fillRect(x, 0, BW * this.lag, BH);
-    g.fillStyle(this.defeated ? 0x505050 : 0xb01818, 1).fillRect(x, 0, BW * this.frac, BH);
-    g.fillStyle(0xff6050, 0.5).fillRect(x, 0, BW * this.frac, BH / 3);
-    g.lineStyle(3, 0x8a7048, 1).strokeRect(x - 1, -1, BW + 2, BH + 2);
-    g.lineStyle(1, 0x2a1e12, 1).strokeRect(x - 5, -5, BW + 10, BH + 10);
-    // ornaments
-    for (const sx of [x - 12, -x + 12]) {
-      g.fillStyle(0xa88a58, 1).fillTriangle(sx, BH / 2 - 11, sx + 9, BH / 2, sx, BH / 2 + 11).fillTriangle(sx, BH / 2 - 11, sx - 9, BH / 2, sx, BH / 2 + 11);
-      g.fillStyle(0x7a1010, 1).fillCircle(sx, BH / 2, 4);
+    const g = this.g.clear(), x = -BW / 2, y = 8, r = BH / 2;
+    g.fillStyle(0x000000, 0.5).fillRoundedRect(x - 1, y - 1, BW + 2, BH + 2, r + 1);
+    if (this.lag > this.frac) g.fillStyle(0xf0dcc0, 0.85).fillRoundedRect(x, y, Math.max(BH, BW * this.lag), BH, r);
+    if (this.frac > 0.003) {
+      const w = Math.max(BH, BW * this.frac);
+      g.fillStyle(this.defeated ? 0x606060 : 0xa81818, 1).fillRoundedRect(x, y, w, BH, r);
+      g.fillStyle(0xff7060, 0.45).fillRoundedRect(x + 1, y + 1, w - 2, BH * 0.38, r);
+    }
+    g.lineStyle(1, 0xc8a46a, 0.7).strokeRoundedRect(x - 0.5, y - 0.5, BW + 1, BH + 1, r + 1);
+    // ornament: diamonds at both ends
+    g.fillStyle(0xc8a46a, 0.95);
+    for (const sx of [x - 10, -x + 10]) g.fillTriangle(sx, y + r - 5, sx + 5, y + r, sx, y + r + 5).fillTriangle(sx, y + r - 5, sx - 5, y + r, sx, y + r + 5);
+    // poise
+    if (this.poiseMax > 0) {
+      const px = -PW / 2, py = y + BH + 6;
+      g.fillStyle(0x000000, 0.4).fillRect(px, py, PW, PH);
+      g.fillStyle(this.poise < 0.25 ? 0xffffff : 0xd8b860, 0.95).fillRect(px, py, PW * this.poise, PH);
     }
   }
 }

@@ -50,6 +50,8 @@ class GameStateImpl {
   flags: GameFlags = { w1BossBeaten: false, gameCompleted: false, quests: {} };
   life = 100;
   mana = 50;
+  /** Combat stamina (not saved; refilled on load / respawn). */
+  stamina = 100;
 
   constructor() {
     // Generic XP grant (quest rewards etc.).
@@ -74,6 +76,7 @@ class GameStateImpl {
     this.flags = { w1BossBeaten: false, gameCompleted: false, quests: {} };
     this.life = this.maxLife;
     this.mana = this.maxMana;
+    this.stamina = this.maxStamina;
     this.save();
   }
 
@@ -88,6 +91,7 @@ class GameStateImpl {
     this.flags = d.flags;
     this.life = this.maxLife;
     this.mana = this.maxMana;
+    this.stamina = this.maxStamina;
     return true;
   }
   save(): void {
@@ -101,6 +105,7 @@ class GameStateImpl {
   }
   get maxLife(): number { return this.derived.maxLife; }
   get maxMana(): number { return this.derived.maxMana; }
+  get maxStamina(): number { return this.derived.maxStamina; }
 
   // --- shared-contract aliases over `profile` ---
   get level(): number { return this.profile.level; }
@@ -118,6 +123,9 @@ class GameStateImpl {
 
   emitVitals(): void {
     EventBus.emit('player:vitals', { life: this.life, maxLife: this.maxLife, mana: this.mana, maxMana: this.maxMana });
+  }
+  emitStamina(): void {
+    EventBus.emit('player:stamina', { stamina: this.stamina, max: this.maxStamina });
   }
   emitProgress(): void {
     const p = this.profile;

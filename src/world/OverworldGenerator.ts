@@ -1,6 +1,7 @@
 import { SeededRNG } from '../core/SeededRNG';
 import { AREAS } from '../data/areas';
 import { ValueNoise } from './noise';
+import { cluster, framePath, planPath, placeBridges, putSet, canFit } from './composition';
 import { placePack } from './spawns';
 import { TileMap } from './TileMap';
 
@@ -55,8 +56,11 @@ export function generateOverworld(worldId: WorldId, seed: number): TileMap {
     }
   }
 
+  // Readable route spawn -> entrance (carved as a 2-3 wide road below; props never spawn on it)
+  const route = planPath(rng, N, spawn, entrance);
+
   // Props
-  const clear = (i: number, j: number) => near(i, j, spawn, 5) || near(i, j, entrance, 4) || near(i, j, wp, 2);
+  const clear = (i: number, j: number) => route.cells.has(map.idx(i, j)) || near(i, j, spawn, 5) || near(i, j, entrance, 4) || near(i, j, wp, 2);
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const edge = i < 2 || j < 2 || i >= N - 2 || j >= N - 2;
@@ -72,7 +76,7 @@ export function generateOverworld(worldId: WorldId, seed: number): TileMap {
       const r = rng.next();
       const forest = g === 'w1_forest_floor';
       if (worldId === 'w1') {
-        if (forest && r < 0.1) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
+        if (forest && r < 0.04) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
         else if (!forest && r < 0.018) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
         else if (r < 0.05 && (forest || r >= 0.018)) map.addProp({ key: rng.pick(bio.blockDeco), gx: i, gy: j, w: 1, h: 1, blocks: true });
         else if (r < 0.09 || (forest && r < 0.17)) map.addProp({ key: rng.pick(bio.deco), gx: i, gy: j, w: 1, h: 1, blocks: false });
@@ -99,6 +103,11 @@ export function generateOverworld(worldId: WorldId, seed: number): TileMap {
   clearArea(spawn, 4);
   clearArea(entrance, 3);
   clearArea(wp, 1);
+  for (const n of route.cells) {
+    const i = n % N, j = (n / N) | 0;
+    clearCell(i, j);
+    map.ground[n] = map.groundIndex(bio.path);
+  }
 
   // Landmarks (blocking, interactable props)
   map.addProp({ key: 'waypoint', gx: wp.gx, gy: wp.gy, w: 1, h: 1, blocks: true });
@@ -106,6 +115,41 @@ export function generateOverworld(worldId: WorldId, seed: number): TileMap {
   map.addProp({ key: 'dungeon_entrance', gx: entrance.gx, gy: entrance.gy, w: 1, h: 1, blocks: true });
   map.addMarker('dungeon_entrance', entrance.gx, entrance.gy);
   map.addMarker('spawn', spawn.gx, spawn.gy);
+
+  // Composition: set pieces in clusters, clearings and framing, never on the road. Guarded by hasSetPiece() (art may be absent).
+  const keepOff = (i: number, j: number) => near(i, j, spawn, 7) || near(i, j, entrance, 6) || near(i, j, wp, 3) || Math.hypot(i - spawn.gx, j - spawn.gy) < 8;
+  const rc = () => ({ gx: rng.int(7, N - 8), gy: rng.int(7, N - 8) });
+  const spot = (): { gx: number; gy: number } => { for (let t = 0; t < 40; t++) { const c = rc(); if (!keepOff(c.gx, c.gy) && canFit(map, c.gx, c.gy, 1, 1, route.cells)) return c; } return rc(); };
+  framePath(map, rng, route.pts, route.cells, true, keepOff);
+  const ruinSite = (c: { gx: number; gy: number }) => {
+    putSet(map, 'broken_wall', c.gx, c.gy, 2, 1);
+    putSet(map, 'broken_wall', c.gx + 3, c.gy + 2, 1, 2, true, { flipX: true });
+    cluster(map, rng, c.gx + 1, c.gy + 1, 3.5, ['ruins_pillar', 'rock_2'], 3, true, route.cells);
+  };
+  if (worldId === 'w1') {
+    for (let g = 0; g < 11; g++) { const c = spot(); cluster(map, rng, c.gx, c.gy, 3.8, bio.trees, 9, true, route.cells); if (g % 3 === 0) cluster(map, rng, c.gx, c.gy, 3, ['big_root'], 2, true, route.cells); }
+    for (let g = 0; g < 4; g++) { const c = spot(); cluster(map, rng, c.gx, c.gy, 3, ['giant_mushroom'], 3 + rng.int(0, 2), true, route.cells); cluster(map, rng, c.gx, c.gy, 4, ['mushrooms'], 7, false, route.cells); }
+    for (let g = 0; g < 3; g++) ruinSite(spot());
+    for (let g = 0; g < 5; g++) { const c = spot(); cluster(map, rng, c.gx, c.gy, 3.5, ['flowers'], 10, false, route.cells); }
+    for (let t = 0, w = 0; t < 400 && w < 4; t++) {
+      const c = rc(), g = map.ground[map.idx(c.gx, c.gy)];
+      if (g === 255 || !map.groundSolid[g] || keepOff(c.gx, c.gy)) continue;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => canFit(map, c.gx + dx, c.gy + dy, 1, 1))) continue;
+      if (putSet(map, 'waterfall_rock', c.gx, c.gy, 1, 1, false)) w++;
+    }
+    placeBridges(map, rng, 3, [spawn, entrance]);
+  } else {
+    for (let g = 0; g < 5; g++) ruinSite(spot());
+    for (let g = 0; g < 6; g++) { const c = spot(); cluster(map, rng, c.gx, c.gy, 3.5, ['obsidian_spire', 'lava_rock', 'dead_tree'], 6, true, route.cells); }
+    for (let g = 0; g < 6; g++) { const c = spot(); putSet(map, 'arcane_obelisk', c.gx, c.gy); cluster(map, rng, c.gx, c.gy, 3, ['crystal'], 2, true, route.cells); }
+    for (let g = 0; g < 14; g++) { const c = spot(); cluster(map, rng, c.gx, c.gy, 4, ['bones_large', 'skull_pile'], 2, false, route.cells); }
+    for (let t = 0, w = 0; t < 600 && w < 16; t++) {
+      const c = rc(), g = map.ground[map.idx(c.gx, c.gy)];
+      if (g === 255 || !map.groundSolid[g] || keepOff(c.gx, c.gy)) continue;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => canFit(map, c.gx + dx, c.gy + dy, 1, 1))) continue;
+      if (putSet(map, 'lava_pillar', c.gx, c.gy, 1, 1, false)) w++;
+    }
+  }
 
   // Guarantee a route spawn -> entrance: carve a wobbly corridor if the flood fill cannot reach it.
   const reaches = () => {

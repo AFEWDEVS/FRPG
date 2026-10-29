@@ -3,6 +3,7 @@ import type { CombatSystem } from '../combat/CombatSystem';
 import { createBossBrain, type BossBrain } from '../combat/bosses';
 import { CHAMPION_AFFIXES, ENEMIES, enemyDmgMult, enemyHpMult, enemyXpMult, type EnemyDef } from '../data/enemies';
 import { gridToWorld } from '../iso/iso';
+import { EventBus } from '../core/EventBus';
 import type { Element } from '../vfx/VfxManager';
 import { Entity } from './Entity';
 import type { Player } from './Player';
@@ -59,6 +60,16 @@ export class Enemy extends Entity {
   maxShield = 0;
   aggro = false;
   brain?: BossBrain;
+  /** Stagger meter: heavy/combo hits drain it, at 0 the enemy is staggered (interrupted, vulnerable). */
+  poise = 0;
+  maxPoise = 0;
+  staggerUntil = 0;
+  private staggerImmuneUntil = 0;
+  private poiseHitAt = 0;
+  private poiseSentAt = 0;
+  private poiseSent = -1;
+  private strafeDir = Math.random() < 0.5 ? -1 : 1;
+  private strafeT = 800 + Math.random() * 1500;
 
   private aiState: State = 'idle';
   private stateT = 0;
@@ -92,7 +103,9 @@ export class Enemy extends Entity {
     this.home = { gx: this.gx, gy: this.gy };
     this.level = s.level ?? (BOSS_LEVEL[def.id] ?? Math.max(1, Enemy.areaLevel + (Math.random() < 0.4 ? 1 : 0)));
     const hpMult = def.boss ? 1 + 0.05 * (this.level - 1) : enemyHpMult(this.level);
-    this.maxHp = this.hp = Math.round(def.hp * hpMult * (this.champion ? 2.5 : 1));
+    // heavy-combat tuning: grunts last 3-5 hits, champions ~10, bosses long
+    this.maxHp = this.hp = Math.round(def.hp * hpMult * (def.boss ? 1.25 : this.champion ? 2.2 * 1.15 : 1.15));
+    this.maxPoise = this.poise = Math.round((def.poise ?? 32 + def.hp * 0.18) * (this.champion ? 1.6 : 1));
     this.speedAffix = this.affixes.includes('fast') ? 1.35 : 1;
     this.speed = def.speed * (this.affixes.includes('fast') ? 1.3 : 1);
     this.aggroRange = def.aggro ?? 8;
@@ -102,7 +115,7 @@ export class Enemy extends Entity {
       this.sprite.setTint(0x88aaff);
       this.anim.baseTint = 0x88aaff;
       const names = this.affixes.map((a) => CHAMPION_AFFIXES.find((c) => c.id === a)?.name ?? a).join(' ');
-      this.addLabel(`${def.name} (${names})`, '#7fa6ff');
+      this.addLabel(`${def.name} ${names}`.toUpperCase(), '#7fa6ff');
       if (this.affixes.includes('shielded')) { this.maxShield = this.shield = Math.round(this.maxHp * 0.6); }
     } else if (def.boss) {
       this.addLabel(def.name, '#ffd24a');
@@ -133,6 +146,66 @@ export class Enemy extends Entity {
 
   setMoving(b: boolean): void { this.moving = b; }
   get isBoss(): boolean { return !!this.def.boss; }
+  get staggered(): boolean { return this.scene.time.now < this.staggerUntil; }
+  /** In wind-up, dash or recovery: holds one of the limited attack slots (CombatSystem.requestAttack). */
+  get attacking(): boolean { return this.aiState === 'windup' || this.aiState === 'dash' || this.aiState === 'recover'; }
+
+  // ------------------------------------------------------------ poise / stagger
+
+  /** Drain poise from a hit. Returns true if it staggered. No chain-staggers: a short immunity follows each stagger. */
+  hitPoise(n: number, o: { heavy?: boolean } = {}): boolean {
+    if (this.dead || this.invulnerable || n <= 0) return false;
+    const now = this.scene.time.now;
+    this.poiseHitAt = now;
+    if (now < this.staggerUntil || now < this.staggerImmuneUntil) return false;
+    this.addPoise(-n, o.heavy);
+    return this.staggered;
+  }
+
+  addPoise(delta: number, heavy = false): void {
+    if (this.dead) return;
+    const was = this.poise;
+    this.poise = Math.max(0, Math.min(this.maxPoise, this.poise + delta));
+    const now = this.scene.time.now;
+    if (this.def.boss) {
+      const r = Math.round(this.poise);
+      if (r !== this.poiseSent && (now - this.poiseSentAt > 80 || this.poise <= 0 || this.poise >= this.maxPoise)) {
+        this.poiseSent = r; this.poiseSentAt = now;
+        EventBus.emit('boss:poise', { bossId: this.def.id, value: r, max: this.maxPoise });
+      }
+    } else if (delta < 0 || was !== this.poise) this.drawBar();
+    if (this.poise <= 0 && delta < 0 && now >= this.staggerUntil) this.stagger(this.def.boss ? 3000 : heavy ? 1000 : 750);
+  }
+
+  /** Interrupt: cancels the current attack, flashes, and opens a punish window (extra damage taken). */
+  stagger(ms: number, parried = false): void {
+    if (this.dead || this.invulnerable) return;
+    const ctx = this.ctx, now = this.scene.time.now, boss = !!this.def.boss;
+    this.staggerUntil = now + ms;
+    this.staggerImmuneUntil = now + ms + (boss ? 6000 : 1500);
+    this.cancelWind();
+    this.dashV = undefined;
+    if (this.aiState !== 'flee') this.aiState = 'chase';
+    this.cdT = Math.max(this.cdT, 500);
+    this.poise = this.maxPoise;
+    if (boss) { EventBus.emit('boss:poise', { bossId: this.def.id, value: 0, max: this.maxPoise }); this.poiseSent = 0; this.poiseSentAt = now; }
+    this.drawBar();
+    this.anim.flash(150);
+    this.anim.squash(1.22, 0.78);
+    this.sprite.setTint(0xffe9a0);
+    this.scene.time.delayedCall(Math.min(ms, 300), () => { if (!this.dead && this.active) this.restoreTint(); });
+    ctx.vfx.emit('stars', this.x, this.y - this.sprite.displayHeight, boss ? 10 : 5, { tint: 0xffee88, scale: 0.14, speed: [20, 80], life: 700 });
+    ctx.vfx.shockwave(this.x, this.y, { radius: boss ? 300 : 130, duration: 360 });
+    ctx.sfx(boss ? 'ice_shatter' : 'enemy_hit', { volume: 0.7 });
+    EventBus.emit('emote:show', { target: this.id, name: 'dots' });
+    EventBus.emit('enemy:staggered', { id: this.id, defId: this.def.id, boss });
+    if (boss) {
+      ctx.vfx.floatingText(parried ? '¡Parado!' : '¡ABERTURA!', this.x, this.y - this.sprite.displayHeight - 40, { color: '#ffe680', size: 26, duration: 1200 });
+      ctx.vfx.zoomPunch(1.05, 120, 600, 400);
+      ctx.vfx.screenShake(0.006, 160);
+      this.brain?.onStagger?.(ms);
+    }
+  }
   get center(): { x: number; y: number } { return { x: this.x, y: this.y - this.sprite.displayHeight * 0.5 }; }
   get effSpeed(): number {
     const t = this.scene.time.now;
@@ -191,10 +264,10 @@ export class Enemy extends Entity {
   /** Slide away from a point. */
   knockFrom(from: { gx: number; gy: number }, tiles: number): void {
     if (this.def.boss || tiles <= 0) return;
+    if (this.aiState === 'windup') tiles *= 0.4; // committed attacks are only nudged, not cancelled (poise does that)
     const dx = this.gx - from.gx, dy = this.gy - from.gy, l = Math.hypot(dx, dy) || 1;
-    const ms = 140;
+    const ms = tiles > 1 ? 220 : 140;
     this.knock = { vx: (dx / l) * (tiles / ms) * 1000, vy: (dy / l) * (tiles / ms) * 1000, ms };
-    this.cancelWind();
   }
 
   stun(ms: number): void {
@@ -313,6 +386,8 @@ export class Enemy extends Entity {
     this.moving = false;
     this.updateStatus(dtMs, now);
     if (this.dead) return;
+    if (this.poise < this.maxPoise && now > this.staggerUntil && now - this.poiseHitAt > (this.def.boss ? 4000 : 2500)) this.addPoise((this.def.boss ? 7 : 14) * dtMs / 1000);
+    if (now < this.staggerUntil) return;
     if (now < this.stunUntil) return;
     this.cdT = Math.max(0, this.cdT - dtMs);
     if (this.brain) { this.brain.update(dtMs, time); return; }
@@ -379,7 +454,7 @@ export class Enemy extends Entity {
 
     if (this.aiState === 'windup') {
       this.stateT -= dt;
-      if (this.winding && tgt) this.faceGrid(tgt.gx - this.gx, tgt.gy - this.gy);
+      if (this.winding) this.faceGrid(this.winding.x - this.gx, this.winding.y - this.gy); // committed: no re-aim
       if (this.stateT <= 0) this.execute(tgt);
       return;
     }
@@ -409,8 +484,8 @@ export class Enemy extends Entity {
     if (a.kind === 'ranged' && d < keep) {
       this.moving = this.stepToward(this.gx + (this.gx - tgt.gx), this.gy + (this.gy - tgt.gy), dt, 0, 0.85);
       this.faceGrid(tgt.gx - this.gx, tgt.gy - this.gy);
-      if (!this.moving && this.cdT <= 0) this.beginWindup(tgt);
-      else if (this.moving && d > keep * 0.6 && this.cdT <= 0 && d <= a.range) this.beginWindup(tgt);
+      if (!this.moving && this.cdT <= 0) this.tryAttack(tgt);
+      else if (this.moving && d > keep * 0.6 && this.cdT <= 0 && d <= a.range) this.tryAttack(tgt);
       return;
     }
     if (d > a.range * 0.92) {
@@ -419,7 +494,25 @@ export class Enemy extends Entity {
       return;
     }
     this.faceGrid(tgt.gx - this.gx, tgt.gy - this.gy);
-    if (this.cdT <= 0) this.beginWindup(tgt);
+    if (this.cdT <= 0) { if (!this.tryAttack(tgt)) this.holdBack(tgt, dt); }
+    else if (!this.charmed && !this.def.immobile && a.kind !== 'ranged') this.holdBack(tgt, dt, 0.5);
+  }
+
+  /** Attack slots: only 2-3 enemies may be in an attack at once, the rest circle and wait their turn. */
+  private tryAttack(t: AiTarget): boolean {
+    if (this.charmed || this.ctx.requestAttack(this)) { this.beginWindup(t); return true; }
+    return false;
+  }
+
+  private holdBack(t: AiTarget, dt: number, speedMul = 0.6): void {
+    if (this.def.immobile) return;
+    this.strafeT -= dt;
+    if (this.strafeT <= 0) { this.strafeT = 1200 + Math.random() * 1800; this.strafeDir = -this.strafeDir; }
+    const dx = t.gx - this.gx, dy = t.gy - this.gy, l = Math.hypot(dx, dy) || 1;
+    const sp = (this.effSpeed * speedMul * dt) / 1000;
+    const back = l < this.def.atk.range * 0.85 ? -0.5 : 0;
+    const ux = dx / l, uy = dy / l, sd = this.strafeDir * 0.7;
+    this.moving = this.moveBy((-uy * sd + ux * back) * sp, (ux * sd + uy * back) * sp, dx, dy);
   }
 
   private idle(dt: number): void {
@@ -451,9 +544,13 @@ export class Enemy extends Entity {
     this.faceGrid(t.gx - this.gx, t.gy - this.gy);
     const ms = this.stateT;
     const ang = Math.atan2(t.gy - this.gy, t.gx - this.gx);
-    if (a.kind === 'slam') this.tele = ctx.vfx.telegraphCircle(this.gx, this.gy, a.radius ?? 2, ms, 0xff5a2a);
-    else if (a.kind === 'lunge') this.tele = ctx.vfx.telegraphLine(this.gx, this.gy, ang, a.range + 0.3, 0.9, ms, 0xff5a2a);
-    else if (a.kind === 'ranged') ctx.vfx.flash(this.x, this.y - this.sprite.displayHeight * 0.6, { element: (a.element === 'ice' ? 'ice' : (a.element ?? 'physical')) as Element, size: 70, ms });
+    const col = a.kind === 'slam' || a.kind === 'lunge' || a.dmg[1] >= 12 ? 0xff2a14 : 0xff5a2a;
+    if (a.kind === 'slam') this.tele = ctx.vfx.telegraphCircle(this.gx, this.gy, a.radius ?? 2, ms, col);
+    else if (a.kind === 'lunge') this.tele = ctx.vfx.telegraphLine(this.gx, this.gy, ang, a.range + 0.3, 0.9, ms, col);
+    else if (a.kind === 'melee') this.tele = ctx.vfx.telegraphCone(this.gx, this.gy, ang, a.range + 0.7, 0.75, ms, col);
+    const wsw = gridToWorld(t.gx - this.gx, t.gy - this.gy);
+    this.anim.attackLunge(wsw.x, wsw.y, 200, Math.max(300, ms + 280), ms); // pull-back pose, then the strike
+    if (a.kind === 'ranged') ctx.vfx.flash(this.x, this.y - this.sprite.displayHeight * 0.6, { element: (a.element === 'ice' ? 'ice' : (a.element ?? 'physical')) as Element, size: 70, ms });
     this.sprite.setTint(0xff9d8a);
   }
 
@@ -464,16 +561,19 @@ export class Enemy extends Entity {
     this.tele = undefined; this.winding = undefined;
     this.restoreTint();
     this.cdT = a.cooldown / this.atkSpeed();
-    this.aiState = 'recover'; this.stateT = 260;
+    const REC: Record<string, number> = { melee: 560, ranged: 500, slam: 1000, lunge: 700 };
+    this.aiState = 'recover'; this.stateT = REC[a.kind] ?? 500;
     if (!w) { this.aiState = 'chase'; return; }
     const target = tgt ?? w.target;
     const sw = gridToWorld(w.x - this.gx, w.y - this.gy);
-    this.anim.attackLunge(sw.x, sw.y);
-    const info = (mult = 1) => ({ amount: this.rollDmg() * mult, type: a.type, from: this as { gx: number; gy: number }, knockback: 0 });
+    const heavyHit = a.kind === 'slam' || a.kind === 'lunge' || a.dmg[1] >= 14;
+    const info = (mult = 1) => ({ amount: this.rollDmg() * mult, type: a.type, from: this as { gx: number; gy: number }, knockback: 0, heavy: heavyHit });
     if (a.kind === 'melee') {
       ctx.sfx('sword_swing_2', { volume: 0.35 });
       ctx.vfx.slashArc(this.x + sw.x * 0.1, this.y - this.sprite.displayHeight * 0.5, Math.atan2(sw.y, sw.x), { size: 110 * this.def.scale, ms: 180 });
-      if (this.distanceTo(target) <= a.range + 0.7) this.strike(target, info());
+      const lx = w.x - this.gx, ly = w.y - this.gy, ll = Math.hypot(lx, ly) || 1;
+      const tx = target.gx - this.gx, ty = target.gy - this.gy, td = Math.hypot(tx, ty);
+      if (td <= a.range + 0.7 && (td < 0.5 || (tx * lx + ty * ly) / (td * ll) > 0.3)) this.strike(target, info());
     } else if (a.kind === 'lunge') {
       const l = Math.hypot(w.x - this.gx, w.y - this.gy) || 1;
       this.dashV = { dx: (w.x - this.gx) / l, dy: (w.y - this.gy) / l, left: a.range + 0.3, hit: false, target };
@@ -510,11 +610,11 @@ export class Enemy extends Entity {
     this.moving = true;
     this.ctx.vfx.trail(this.x, this.y - 20, 'physical', 0.8);
     const t = dv.target;
-    if (!dv.hit && this.distanceTo(t) < 1.2) { dv.hit = true; this.strike(t, { amount: this.rollDmg(), type: this.def.atk.type, from: this }); }
-    if (dv.left <= 0.01 || !moved) { this.dashV = undefined; this.aiState = 'recover'; this.stateT = 400; }
+    if (!dv.hit && this.distanceTo(t) < 1.2) { dv.hit = true; this.strike(t, { amount: this.rollDmg(), type: this.def.atk.type, from: this, heavy: true }); }
+    if (dv.left <= 0.01 || !moved) { this.dashV = undefined; this.aiState = 'recover'; this.stateT = 750; }
   }
 
-  private strike(t: AiTarget | Enemy | Player, info: { amount: number; type: 'physical' | 'fire' | 'cold' | 'lightning'; from: { gx: number; gy: number } }): void {
+  private strike(t: AiTarget | Enemy | Player, info: { amount: number; type: 'physical' | 'fire' | 'cold' | 'lightning'; from: { gx: number; gy: number }; heavy?: boolean }): void {
     const ctx = this.ctx;
     const ref = 'ref' in t ? t.ref : t;
     if (ref.kind === 'player') {
@@ -534,6 +634,7 @@ export class Enemy extends Entity {
     g.fillStyle(0x000000, 0.7).fillRect(-w / 2 - 1, y - 1, w + 2, 6);
     g.fillStyle(this.charmed ? 0xff6aae : this.champion ? 0x5a8aff : 0xc0281c, 1).fillRect(-w / 2, y, (w * this.hp) / this.maxHp, 4);
     if (this.shield > 0) g.fillStyle(0x9ad0ff, 0.9).fillRect(-w / 2, y - 3, (w * this.shield) / this.maxShield, 2);
+    if (this.poise < this.maxPoise) g.fillStyle(0xffd24a, 0.9).fillRect(-w / 2, y + 5, (w * this.poise) / this.maxPoise, 2);
   }
 
   /** XP awarded for this enemy relative to the player's level. */

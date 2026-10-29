@@ -41,6 +41,16 @@ export interface DamageInfo {
   dot?: boolean;
   /** Never misses (guaranteed hits). */
   noMiss?: boolean;
+  /** Poise damage dealt to the target (default 12 for non-DoT hits). */
+  poise?: number;
+  /** Explicit hit-pause in ms (hits that set it also get a camera impulse). */
+  hitStop?: number;
+  /** Marks a weighty hit (enables hit-stop / impulse feedback). */
+  weight?: number;
+  /** Camera impulse magnitude along the hit direction. */
+  impulse?: number;
+  /** Heavy hit: staggers the target / the hero unless armored. */
+  heavy?: boolean;
 }
 
 export interface HitResult { dealt: number; crit: boolean; killed: boolean; }
