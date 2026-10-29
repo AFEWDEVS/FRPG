@@ -1,0 +1,13 @@
+import { launch, newGame } from './lib.mjs';
+const t = await launch(); 
+t.page.on('console', m => { if (m.text().startsWith('[anim]')) console.log(m.text()); });
+await newGame(t,'T',0);
+await t.sleep(1000); await t.shot('c_town');
+console.log('anim', await t.dbg(()=>{const p=window.__dbg.scene.player; return !!p.anim.animator;}));
+console.log('fps town', await t.fps(2500));
+await t.dbg(()=>window.__dbg.go('w1')); await t.sleep(4500);
+await t.dbg(()=>{const s=window.__dbg.scene; s.player.setPath([{gx:Math.floor(s.player.gx)+4,gy:Math.floor(s.player.gy)}]);});
+await t.sleep(600); await t.shot('c_w1_walk');
+console.log('fps w1', await t.fps(3000));
+await t.dbg(()=>window.__dbg.go('w2')); await t.sleep(4500); await t.shot('c_w2');
+console.log(t.errors.filter(e=>!e.includes('404')).slice(0,8).join('\n')); await t.browser.close();

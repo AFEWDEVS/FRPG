@@ -283,15 +283,19 @@ class QuestManagerImpl {
     GameState.save();
     const s = this.scene;
     if (!s) return;
-    s.time.delayedCall(3800, () => {
+    let waits = 0;
+    const go = () => {
       if (this.scene !== s) return;
+      // let the post-fight banter finish first
+      if (DialogueManager.active && waits++ < 120) { s.time.delayedCall(500, go); return; }
       s.cameras.main.fadeOut(900, 255, 255, 255);
       s.cameras.main.once('camerafadeoutcomplete', () => {
         EventBus.emit('dialogue:hide');
         s.scene.stop('UI');
         s.scene.start('Ending');
       });
-    });
+    };
+    s.time.delayedCall(5200, go);
   }
 
   // ---------------------------------------------------------------- log / ui

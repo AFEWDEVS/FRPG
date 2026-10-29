@@ -1,53 +1,61 @@
 import Phaser from 'phaser';
 import { AudioManager } from '../audio/AudioManager';
 import { BASE_H, BASE_W } from '../constants';
+import { EventBus, type GameEvents } from '../core/EventBus';
 import { GameState } from '../core/GameState';
-import { ENDING_LINES, ENDING_UI } from '../data/story';
-import { fmt, speakerOf } from '../dialogue/DialogueManager';
-import { typewriter, type Typer } from '../dialogue/typewriter';
+import { ENDING_EPILOGUE, ENDING_LINES, ENDING_UI } from '../data/story';
+import { DialogueManager } from '../dialogue/DialogueManager';
+import { DialogueBox } from '../ui/DialogueBox';
+import type { UiHost } from '../ui/Panel';
+import { RichText } from '../ui/RichText';
 import { coverBackground, textStyle } from '../ui/widgets';
 
-/** Romantic comic finale: bg_ending, fireworks and hearts, a talk with Amaranta, then the credits. */
+const BAR = 56;
+
+/** Romantic comic finale: Ken Burns bg_ending, letterbox, fireworks and hearts, a branching talk with Amaranta, then the credits. */
 export class EndingScene extends Phaser.Scene {
-  private idx = 0;
-  private typer?: Typer;
-  private box!: Phaser.GameObjects.Container;
-  private portrait!: Phaser.GameObjects.Image;
-  private nameTxt!: Phaser.GameObjects.Text;
-  private body!: Phaser.GameObjects.Text;
+  private box!: DialogueBox;
+  private unsub: (() => void)[] = [];
   private finished = false;
   private leaving = false;
 
   constructor() { super('Ending'); }
 
+  consumeClick(): void { /* DialogueBox host contract */ }
+
   create(): void {
-    this.idx = 0;
     this.finished = false;
     this.leaving = false;
     GameState.flags.gameCompleted = true;
     GameState.flags.endingSeen = true;
     GameState.save();
-    this.cameras.main.fadeIn(1200, 255, 255, 255);
+    DialogueManager.reset();
+    DialogueManager.init();
+    this.cameras.main.fadeIn(1400, 255, 255, 255);
     AudioManager.playMusic('ending');
-    coverBackground(this, 'bg_ending', BASE_W, BASE_H);
-    this.add.rectangle(BASE_W / 2, BASE_H / 2, BASE_W, BASE_H, 0x10040c, 0.18);
+    const bg = coverBackground(this, 'bg_ending', BASE_W, BASE_H);
+    const s0 = bg.scale;
+    bg.setScale(s0 * 1.12);
+    this.tweens.add({ targets: bg, scale: s0 * 1.02, x: BASE_W / 2 - 24, y: BASE_H / 2 + 8, duration: 40000, ease: 'Sine.easeInOut' });
+    this.add.rectangle(BASE_W / 2, BASE_H / 2, BASE_W, BASE_H, 0x10040c, 0.16).setDepth(1);
+    const top = this.add.rectangle(BASE_W / 2, -BAR / 2, BASE_W, BAR, 0x000000).setDepth(8);
+    const bot = this.add.rectangle(BASE_W / 2, BASE_H + BAR / 2, BASE_W, BAR, 0x000000).setDepth(8);
+    this.tweens.add({ targets: top, y: BAR / 2, duration: 1000, ease: 'Cubic.easeOut' });
+    this.tweens.add({ targets: bot, y: BASE_H - BAR / 2, duration: 1000, ease: 'Cubic.easeOut' });
     this.celebrate();
 
-    this.box = this.add.container(0, 0).setDepth(10);
-    const panel = this.add.rectangle(BASE_W / 2, 600, 1120, 190, 0x120c0a, 0.92).setStrokeStyle(4, 0x6a5a40);
-    this.portrait = this.add.image(190, 600, 'portrait_amaranta').setDisplaySize(160, 160);
-    this.nameTxt = this.add.text(300, 523, '', textStyle(24, '#ffb0c8')).setOrigin(0, 0.5);
-    this.body = this.add.text(300, 550, '', { ...textStyle(23, '#f0e6cc'), wordWrap: { width: 800 }, lineSpacing: 6, strokeThickness: 2 });
-    const hint = this.add.text(BASE_W - 100, 676, '▼', textStyle(22, '#d8b060')).setOrigin(0.5);
-    this.tweens.add({ targets: hint, y: 684, duration: 500, yoyo: true, repeat: -1 });
-    this.box.add([panel, this.portrait, this.nameTxt, this.body, hint]);
-
-    this.input.on('pointerdown', () => this.advance());
-    this.input.keyboard?.on('keydown-SPACE', () => this.advance());
-    this.input.keyboard?.on('keydown-ENTER', () => this.advance());
+    this.box = new DialogueBox(this as unknown as Phaser.Scene & UiHost, { bottom: BAR + 14 });
+    this.unsub.push(
+      EventBus.on('dialogue:show', (p: GameEvents['dialogue:show']) => this.box.show(p)),
+      EventBus.on('dialogue:hide', () => this.box.hide()),
+    );
     this.input.keyboard?.on('keydown-ESC', () => this.toCredits());
-    this.time.delayedCall(1400, () => this.showLine());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => { this.unsub.forEach((f) => f()); this.unsub = []; });
+    this.add.text(BASE_W - 14, BASE_H - 18, 'Esc: saltar', textStyle(13, '#a89a78')).setOrigin(1, 0.5).setDepth(11);
+    this.time.delayedCall(1800, () => DialogueManager.play(ENDING_LINES, { onDone: () => this.showFin() }));
   }
+
+  update(_t: number, dt: number): void { this.box?.update(dt); }
 
   private celebrate(): void {
     if (this.textures.exists('vfx_heart')) {
@@ -60,7 +68,7 @@ export class EndingScene extends Phaser.Scene {
     this.time.addEvent({
       delay: 650, loop: true,
       callback: () => {
-        const x = Phaser.Math.Between(120, BASE_W - 120), y = Phaser.Math.Between(70, 330);
+        const x = Phaser.Math.Between(120, BASE_W - 120), y = Phaser.Math.Between(90, 300);
         const keys = ['vfx_spark', 'vfx_star', 'vfx_heart'].filter((k) => this.textures.exists(k));
         if (!keys.length) return;
         const key = Phaser.Utils.Array.GetRandom(keys);
@@ -76,40 +84,31 @@ export class EndingScene extends Phaser.Scene {
     });
   }
 
-  private showLine(): void {
-    const l = ENDING_LINES[this.idx];
-    const sp = speakerOf(l.who);
-    this.nameTxt.setText(sp.name);
-    if (this.textures.exists(sp.portrait)) this.portrait.setTexture(sp.portrait).setDisplaySize(160, 160);
-    if (l.who === 'amaranta') AudioManager.sfx('heart_sparkle', { volume: 0.5 });
-    this.typer = typewriter(this, this.body, fmt(l.text), 24);
-  }
-
-  private advance(): void {
-    if (this.finished || !this.typer) return;
-    if (!this.typer.done) { this.typer.complete(); return; }
-    this.idx++;
-    if (this.idx >= ENDING_LINES.length) this.showFin();
-    else this.showLine();
-  }
-
   private showFin(): void {
+    if (this.finished) return;
     this.finished = true;
-    this.box.destroy();
-    const fin = this.add.text(BASE_W / 2, 250, ENDING_UI.title, textStyle(120, '#ffb0c8')).setOrigin(0.5).setDepth(20).setAlpha(0);
-    const sub = this.add.text(BASE_W / 2, 360, ENDING_UI.subtitle, { ...textStyle(26, '#fff2e0'), wordWrap: { width: 900 }, align: 'center' })
-      .setOrigin(0.5, 0).setDepth(20).setAlpha(0);
+    const choice = String(GameState.flags.endingChoice ?? 'default');
+    const sub = ENDING_EPILOGUE[choice] ?? ENDING_UI.subtitle;
+    const veil = this.add.rectangle(BASE_W / 2, BASE_H / 2, BASE_W, BASE_H, 0x10040c, 0).setDepth(18);
+    this.tweens.add({ targets: veil, fillAlpha: 0.55, duration: 1200 });
+    const fin = this.add.text(BASE_W / 2, 230, ENDING_UI.title, { ...textStyle(130, '#ffb0c8'), stroke: '#40101c', strokeThickness: 10 }).setOrigin(0.5).setDepth(20).setAlpha(0);
+    const txt = new RichText(this, (BASE_W - 900) / 2, 340, { size: 26, color: '#fff2e0', width: 900, align: 'center', stroke: '#140a04', strokeW: 4, lineSpacing: 8 }, true);
+    txt.set(sub);
+    txt.c.setDepth(20);
     this.tweens.add({ targets: fin, alpha: 1, scale: { from: 0.6, to: 1 }, duration: 1400, ease: 'Back.easeOut' });
-    this.tweens.add({ targets: sub, alpha: 1, duration: 1800, delay: 900 });
+    let n = 0;
+    this.time.delayedCall(1400, () => {
+      this.time.addEvent({ delay: 35, repeat: txt.length, callback: () => { n++; txt.reveal(n); } });
+    });
     AudioManager.sfx('quest_complete');
-    this.time.delayedCall(7000, () => this.toCredits());
+    this.time.delayedCall(9000 + sub.length * 30, () => this.toCredits());
     this.input.once('pointerdown', () => this.time.delayedCall(2500, () => this.toCredits()));
   }
 
   private toCredits(): void {
     if (this.leaving) return;
     this.leaving = true;
-    this.typer?.stop();
+    DialogueManager.reset();
     this.cameras.main.fadeOut(900);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Credits'));
   }

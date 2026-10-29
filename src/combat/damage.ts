@@ -39,6 +39,8 @@ export interface DamageInfo {
   ally?: boolean;
   /** Damage-over-time tick: smaller numbers, no hit-stop / shake. */
   dot?: boolean;
+  /** Never misses (guaranteed hits). */
+  noMiss?: boolean;
 }
 
 export interface HitResult { dealt: number; crit: boolean; killed: boolean; }
@@ -58,6 +60,16 @@ export function rollPlayerDamage(d: DerivedStats, pct: number, bonusCrit = 0): {
   const base = d.damageMin + Math.random() * (d.damageMax - d.damageMin);
   const crit = Math.random() * 100 < d.critChance + bonusCrit;
   return { amount: base * (pct / 100) * (crit ? d.critMult : 1), crit };
+}
+
+/** Chance (0..1) that a player attack misses: hit rating vs enemy defense, small base chance, spells and bosses miss less. */
+export function missChance(playerLevel: number, dex: number, enemyLevel: number, enemyArmor: number, spell: boolean, boss: boolean): number {
+  const rating = 80 + playerLevel * 6 + dex * 1.2;
+  const defense = 30 + enemyLevel * 6 + enemyArmor * 0.4;
+  let m = 0.03 + 0.18 * (defense / (defense + rating));
+  if (spell) m *= 0.5;
+  if (boss) m *= 0.6;
+  return Math.max(0.02, Math.min(0.3, m));
 }
 
 /** Screen shake strength for a hit relative to the target's max life. */

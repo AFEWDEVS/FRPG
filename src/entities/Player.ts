@@ -22,6 +22,7 @@ export class Player extends Entity {
   dashing = false;
   /** Walkability predicate for confusion jitter / dashes (set by CombatSystem). */
   walkable?: (i: number, j: number) => boolean;
+  private deathShown = false;
 
   constructor(scene: Phaser.Scene, gx: number, gy: number) {
     const cls = CLASSES[GameState.profile.classId];
@@ -50,12 +51,13 @@ export class Player extends Entity {
   dashTo(gx: number, gy: number, ms: number, done?: () => void, onFrame?: () => void): void {
     this.path = [];
     this.dashing = true;
+    this.anim.squash(0.85, 1.2);
     const sx = this.gx, sy = this.gy;
     const proxy = { t: 0 };
     this.scene.tweens.add({
       targets: proxy, t: 1, duration: ms, ease: 'Cubic.easeOut',
       onUpdate: () => { this.gx = sx + (gx - sx) * proxy.t; this.gy = sy + (gy - sy) * proxy.t; this.syncPosition(); onFrame?.(); },
-      onComplete: () => { this.dashing = false; this.gx = gx; this.gy = gy; this.syncPosition(); EventBus.emit('player:moved', { gx, gy }); done?.(); },
+      onComplete: () => { this.anim.squash(1.18, 0.82); this.dashing = false; this.gx = gx; this.gy = gy; this.syncPosition(); EventBus.emit('player:moved', { gx, gy }); done?.(); },
     });
   }
 
@@ -69,6 +71,10 @@ export class Player extends Entity {
 
   tick(_time: number, dtMs: number): void {
     this.moving = false;
+    if (this.dead !== this.deathShown) {
+      this.deathShown = this.dead;
+      if (this.dead) this.anim.die(true); else this.anim.revive();
+    }
     if (!this.locked && !this.dead && !this.dashing && this.path.length) {
       let remaining = (this.speed * this.speedMultiplier * dtMs) / 1000;
       while (remaining > 0 && this.path.length) {

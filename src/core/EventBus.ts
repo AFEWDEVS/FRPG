@@ -28,7 +28,11 @@ export interface GameEvents {
   'skill:use': { slot: 'left' | 'right' | 1 | 2 | 3 | 4 | 5 | 6; gx: number; gy: number; targetId?: string };
   'game:newGame': { name: string; classId: ClassId };
   'settings:changed': undefined;
-  'dialogue:show': { speaker: string; portrait: string; text: string; choices?: { id: string; text: string }[] };
+  'dialogue:show': { speaker: string; portrait: string; text: string; choices?: { id: string; text: string }[]; /** speaker id ('hero','elder'...) for colour / voice */ who?: string; /** punch the portrait */ emphasis?: boolean };
+  /** Make an NPC play an emote bubble (npcId: 'elder' | 'bard' | 'merchant' | 'healer'). */
+  'npc:emote': { npcId: string; emote: string };
+  /** Generic emote: target = 'player' | npc id | enemy id | boss def id; name = heart sweat ! ? angry music sparkle zzz blush broken dots laugh. */
+  'emote:show': { target: string; name: string };
   'dialogue:choice': { id: string };
   'dialogue:hide': undefined;
   'quests:updated': { id: string; title: string; description: string; steps: { text: string; done: boolean }[]; done: boolean }[];

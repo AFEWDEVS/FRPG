@@ -11,6 +11,9 @@ import type { Item } from '../items/types';
 import { AutoMap, type GameLike } from '../ui/AutoMap';
 import { BossBar } from '../ui/BossBar';
 import { DialogueBox } from '../ui/DialogueBox';
+import { Emotes } from '../ui/Emotes';
+import { DialogueManager, fmt } from '../dialogue/DialogueManager';
+import { GREETINGS, HEAL_QUIPS, MERCHANT_UPSELL } from '../data/npcs';
 import { Hud } from '../ui/Hud';
 import { Panel, type UiHost } from '../ui/Panel';
 import { CharacterPanel } from '../ui/panels/CharacterPanel';
@@ -32,11 +35,6 @@ let instance: UIScene | null = null;
 /** Open the merchant panel (hero must be in a running UI scene). */
 export function openShop(): void { instance?.openShop(); }
 
-const GREETINGS: Record<string, string[]> = {
-  merchant: ['¡Pasa, pasa! Pociones para el corazón y la espada. Para el corazón no tengo, pero ánimo.', 'Todo a buen precio... según mi humor de hoy.'],
-  healer: ['Tienes cara de haber peleado con un oso... o con una suegra.', 'Que la luz de las dos lunas cierre esas heridas.'],
-};
-
 /**
  * HUD overlay running in parallel above GameScene: bottom bar, panels (inventory, character, skills, quests, map, shop),
  * dialogue box, boss bar, toasts, automap overlay and the Esc menu.
@@ -48,6 +46,7 @@ export class UIScene extends Phaser.Scene implements UiHost {
   private automap!: AutoMap;
   private panels!: Record<PanelId | 'shop', Panel>;
   private dialogue!: DialogueBox;
+  private emotes!: Emotes;
   private boss!: BossBar;
   private toasts!: Toasts;
   private heldC!: Phaser.GameObjects.Container;
@@ -117,6 +116,8 @@ export class UIScene extends Phaser.Scene implements UiHost {
       quests: new QuestPanel(this), map: new MapPanel(this, this.automap, () => this.game3()), shop: new ShopPanel(this),
     };
     this.dialogue = new DialogueBox(this);
+    DialogueManager.attach(this.game);
+    this.emotes = new Emotes(this);
     this.boss = new BossBar(this);
     this.toasts = new Toasts(this);
     this.heldC = this.add.container(0, 0).setDepth(20000).setVisible(false);
@@ -188,6 +189,7 @@ export class UIScene extends Phaser.Scene implements UiHost {
     this.hud.update(dtMs);
     this.hud.pulse(time);
     this.dialogue.update(dtMs);
+    this.emotes.update(dtMs);
     this.boss.update(dtMs);
     if (this.held) { const p = this.input.activePointer; this.heldC.setPosition(p.x, p.y); }
     const gs = this.game3();
@@ -321,22 +323,27 @@ export class UIScene extends Phaser.Scene implements UiHost {
     const lines = GREETINGS[npcId];
     const text = lines[Math.floor(Math.random() * lines.length)];
     this.dialogue.show({
-      speaker: n.name, portrait: n.portraitKey, text,
+      speaker: n.name, portrait: n.portraitKey, text: fmt(text), who: npcId,
       choices: npcId === 'merchant'
-        ? [{ id: 'shop:trade', text: 'Comerciar' }, { id: 'shop:bye', text: 'Adiós' }]
-        : [{ id: 'shop:heal', text: 'Sanar mis heridas' }, { id: 'shop:bye', text: 'Adiós' }],
+        ? [{ id: 'shop:trade', text: 'Comerciar' }, { id: 'shop:upsell', text: '¿Qué me recomiendas hoy?' }, { id: 'shop:bye', text: 'Adiós' }]
+        : [{ id: 'shop:heal', text: 'Sanar mis heridas' }, { id: 'shop:bye', text: 'Estoy bien, gracias.' }],
     });
   }
 
   private onChoice(id: string): void {
     if (id === 'shop:trade') this.openShop();
+    else if (id === 'shop:upsell') {
+      this.toast(MERCHANT_UPSELL[Math.floor(Math.random() * MERCHANT_UPSELL.length)].replace(/\{\/?\w+\}/g, ''), '#f0b04a');
+      EventBus.emit('emote:show', { target: 'merchant', name: 'sparkle' });
+    }
     else if (id === 'shop:heal') {
       const gs = GameState;
       gs.life = gs.maxLife;
       gs.mana = gs.maxMana;
       gs.emitVitals();
       AudioManager.sfx('heal');
-      this.toast('Hermana Melisa te sana por completo.', '#80ff80');
+      this.toast(HEAL_QUIPS[Math.floor(Math.random() * HEAL_QUIPS.length)].replace(/\{\/?\w+\}/g, ''), '#80ff80');
+      EventBus.emit('emote:show', { target: 'healer', name: 'heart' });
     }
   }
 

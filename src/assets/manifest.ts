@@ -46,3 +46,6 @@ export const AUDIO_MANIFEST: AudioEntry[] = [
   ...MUSIC_KEYS.map((k): AudioEntry => ({ key: `music_${k}`, urls: both('music', k), kind: 'music' })),
   ...SFX_KEYS.map((k): AudioEntry => ({ key: `sfx_${k}`, urls: both('sfx', k), kind: 'sfx' })),
 ];
+
+/** Optional character animation sheets: <ANIM_DIR>/<charKey>.json + .png (see src/anim/CharacterAnimator.ts). */
+export const ANIM_DIR = `${G}/anim`;

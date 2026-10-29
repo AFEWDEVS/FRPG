@@ -61,14 +61,14 @@ class AudioManagerImpl {
   }
 
   /** Play a one-shot effect with random pitch variation (cents). */
-  sfx(name: string, opts: { volume?: number; pitchVar?: number; delay?: number } = {}): void {
+  sfx(name: string, opts: { volume?: number; pitchVar?: number; delay?: number; detune?: number } = {}): void {
     const key = `sfx_${name}`;
     if (!this.has(key)) return;
     const var_ = opts.pitchVar ?? 120;
     try {
       this.game.sound.play(key, {
         volume: (opts.volume ?? 1) * this.settings.sfx,
-        detune: (Math.random() * 2 - 1) * var_,
+        detune: (opts.detune ?? 0) + (Math.random() * 2 - 1) * var_,
         delay: opts.delay ?? 0,
       });
     } catch { /* ignore */ }

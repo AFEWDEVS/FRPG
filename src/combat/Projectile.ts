@@ -54,6 +54,7 @@ export class Projectile {
   private glow?: Phaser.GameObjects.Image;
   private light?: DynamicLight | null;
   private trailT = 0;
+  private flame?: Phaser.GameObjects.Image;
 
   constructor(private sys: CombatSystem, o: ProjectileOpts) {
     this.o = o;
@@ -75,12 +76,28 @@ export class Projectile {
         this.glow = scene.add.image(0, 0, 'vfx_light').setTint(pal.mid).setBlendMode(Phaser.BlendModes.ADD).setScale(0.35 * size).setAlpha(0.6);
         this.root.addAt(this.glow, 0);
       }
+      if (kind === 'arrow') {
+        const st = scene.add.image(-20, 0, 'fx_streak').setOrigin(1, 0.5).setScale(0.8 * size, 0.55).setBlendMode(Phaser.BlendModes.ADD).setTint(o.element === 'fire' ? 0xffa040 : 0xfff0c0).setAlpha(0.65);
+        this.root.addAt(st, 0);
+      }
+    } else if (kind === 'hammer') {
+      this.glow = scene.add.image(0, 0, 'vfx_light').setTint(pal.mid).setBlendMode(Phaser.BlendModes.ADD).setScale(1.1 * size).setAlpha(0.8);
+      this.core = scene.add.image(0, 0, 'fx_hammer').setTint(0xffe28a).setBlendMode(Phaser.BlendModes.ADD).setScale(0.8 * size);
+      const aura = scene.add.image(0, 0, 'vfx_star').setTint(0xffffff).setBlendMode(Phaser.BlendModes.ADD).setScale(0.35 * size).setAlpha(0.8);
+      this.root.add([this.glow, this.core, aura]);
+      sys.vfx.glow(this.core, pal.mid, 5);
+      scene.tweens.add({ targets: this.core, angle: 360, duration: 420, repeat: -1 });
+      scene.tweens.add({ targets: aura, angle: -360, duration: 700, repeat: -1 });
     } else {
       this.glow = scene.add.image(0, 0, 'vfx_light').setTint(pal.mid).setBlendMode(Phaser.BlendModes.ADD).setScale(0.9 * size).setAlpha(0.75);
-      this.core = scene.add.image(0, 0, kind === 'hammer' ? 'vfx_star' : 'vfx_flare').setTint(pal.core).setBlendMode(Phaser.BlendModes.ADD).setScale(0.38 * size);
+      this.core = scene.add.image(0, 0, 'vfx_flare').setTint(pal.core).setBlendMode(Phaser.BlendModes.ADD).setScale(0.38 * size);
       this.root.add([this.glow, this.core]);
       sys.vfx.glow(this.core, pal.mid, 5);
-      if (kind === 'hammer') scene.tweens.add({ targets: this.core, angle: 360, duration: 500, repeat: -1 });
+      if (o.element === 'fire') {
+        this.flame = scene.add.image(0, 0, 'vfx_fire').setTint(0xffa040).setBlendMode(Phaser.BlendModes.ADD).setScale(0.6 * size).setAlpha(0.95);
+        this.root.addAt(this.flame, 1);
+        scene.tweens.add({ targets: this.flame, angle: 360, duration: 380, repeat: -1 });
+      }
     }
     if (o.light) this.light = sys.vfx.addLight(0, 0, o.light, 1);
     this.place();
@@ -124,7 +141,13 @@ export class Projectile {
       this.trailT = 0;
       const k = o.kind ?? 'orb';
       if (k === 'arrow') this.sys.vfx.emit('sparks', this.root.x, this.root.y, 1, { tint: 0xfff0c0, scale: 0.08, speed: [0, 15], life: 260 });
-      else if (k !== 'rock') this.sys.vfx.trail(this.root.x, this.root.y, o.element, (o.size ?? 1) * (k === 'petal' ? 0.5 : 1));
+      else if (k === 'hammer') {
+        this.sys.vfx.emit('glow', this.root.x, this.root.y, 1, { tint: 0xffd45a, scale: 0.5, scaleEnd: 0.05, life: 420, alpha: 0.8 });
+        this.sys.vfx.emit('stars', this.root.x, this.root.y, 1, { tint: 0xfff0b0, scale: 0.14, speed: [10, 50], life: 500 });
+      } else if (k !== 'rock') {
+        this.sys.vfx.trail(this.root.x, this.root.y, o.element, (o.size ?? 1) * (k === 'petal' ? 0.5 : 1));
+        if (o.element === 'fire' && k === 'orb') this.sys.vfx.emit('smoke', this.root.x, this.root.y, 1, { tint: 0x2a2220, scale: 0.18, scaleEnd: 0.6, alpha: 0.35, life: 650, speed: [0, 15] });
+      }
     }
     if (this.glow) this.glow.setAlpha(0.6 + Math.sin(this.age / 50) * 0.15);
     return true;

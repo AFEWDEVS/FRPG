@@ -46,6 +46,7 @@ abstract class BossBase implements BossBrain {
   protected get vfx() { return this.c.vfx; }
   protected dmg(mult = 1): number { return this.e.rollBoss(mult); }
   protected say(t: string): void { this.c.bossTaunt(this.e, t); }
+  protected shout(t: string): void { this.c.skillShout(this.e.x, this.e.y - this.e.sprite.displayHeight - 10, t, '#ffb060'); }
   protected later(ms: number, fn: () => void): void { this.c.after(ms, () => { if (!this.dead && !this.e.dead) fn(); }); }
   protected get dist(): number { return this.e.distanceTo(this.p); }
   protected get ang(): number { return Math.atan2(this.p.gy - this.e.gy, this.p.gx - this.e.gx); }
@@ -194,6 +195,7 @@ class ThornQueenBrain extends BossBase {
     this.later(1300, () => { e.invulnerable = false; });
   }
   private thorns(): number {
+    this.shout('¡Lluvia de Espinas!!');
     const n = this.phase === 1 ? 4 : 7;
     for (let i = 0; i < n; i++) {
       this.later(i * 240, () => {
@@ -214,6 +216,7 @@ class ThornQueenBrain extends BossBase {
     return n * 240 + 1000;
   }
   private petals(): number {
+    this.shout('¡Pétalos Cortantes!!');
     const arms = this.phase === 1 ? 2 : 3;
     const base = this.ang;
     this.c.sfx('heart_sparkle', { volume: 0.6 });
@@ -227,6 +230,7 @@ class ThornQueenBrain extends BossBase {
     return 2500;
   }
   private vines(): number {
+    this.shout('¡Zarzas Voraces!!');
     const n = this.phase === 1 ? 2 : 3;
     this.say('¡Enredaderas, abrazadlo!');
     for (let i = 0; i < n; i++) {
@@ -276,6 +280,7 @@ class OgrePoetBrain extends BossBase {
     this.later(1300, () => { e.invulnerable = false; });
   }
   private slam(): number {
+    this.shout('¡Golpe Sísmico!!');
     const e = this.e;
     const r = 3.2;
     const tele = this.vfx.telegraphCircle(e.gx, e.gy, r, 1000, 0xff5a2a);
@@ -300,6 +305,7 @@ class OgrePoetBrain extends BossBase {
     return this.phase === 2 ? 1900 : 1500;
   }
   private poem(): number {
+    this.shout('¡Poema Aturdidor!!');
     const e = this.e;
     const ang = this.ang;
     this.say(pick(POEMS));
@@ -325,6 +331,7 @@ class OgrePoetBrain extends BossBase {
     return 1900;
   }
   private rock(): number {
+    this.shout('¡Roca Rodante!!');
     const n = this.phase === 1 ? 1 : 3;
     this.c.sfx('boss_roar', { volume: 0.4 });
     for (let i = 0; i < n; i++) {
@@ -374,6 +381,7 @@ class GargoyleBrain extends BossBase {
     }
   }
   private stoneSkin(): void {
+    this.shout('¡Piel de Piedra!!');
     const e = this.e;
     this.stoneT = 16000;
     this.stoneUntil = this.c.now + 6000;
@@ -383,6 +391,7 @@ class GargoyleBrain extends BossBase {
     this.vfx.floatingText('¡Piel de piedra!', e.x, e.y - e.sprite.displayHeight - 60, { color: '#b8c0d0', size: 22 });
   }
   private dive(): number {
+    this.shout('¡Picado Mortal!!');
     const e = this.e, c = this.c;
     const times = this.phase === 2 ? 2 : 1;
     let t0 = 0;
@@ -415,6 +424,7 @@ class GargoyleBrain extends BossBase {
     return t0 + 400;
   }
   private beam(): number {
+    this.shout('¡Rayo Pétreo!!');
     const e = this.e, c = this.c;
     const base = this.ang;
     const tele = this.vfx.telegraphLine(e.gx, e.gy, base, 14, 1.4, 900, 0x6aff6a);
@@ -505,6 +515,7 @@ class MalvarronBrain extends BossBase {
     return 900;
   }
   private missiles(): number {
+    this.shout('¡Misiles Arcanos!!');
     const volleys = this.phase === 1 ? 3 : 4, per = this.phase === 1 ? 5 : 7;
     this.c.sfx('fireball_cast', { volume: 0.5 });
     for (let v = 0; v < volleys; v++) {
@@ -518,6 +529,7 @@ class MalvarronBrain extends BossBase {
     return 500 + volleys * 480 + 500;
   }
   private clones(): number {
+    this.shout('¡Ilusión Doble!!');
     const e = this.e, c = this.c;
     const n = this.phase === 1 ? 2 : 3;
     this.say('¿Cuál es el verdadero? ¡Elige con cuidado, querido!');
@@ -537,6 +549,7 @@ class MalvarronBrain extends BossBase {
   }
   private teleportDelay(): number { this.later(900, () => { this.teleport(false); }); return 1000; }
   private meteors(): number {
+    this.shout('¡Lluvia de Meteoros!!');
     this.say('¡Lluvia de meteoritos! ¡Con mucho cariño!');
     for (let i = 0; i < 7; i++) {
       this.later(i * 260, () => {

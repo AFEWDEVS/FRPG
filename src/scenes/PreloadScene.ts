@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { AUDIO_MANIFEST, IMAGE_MANIFEST } from '../assets/manifest';
+import { animMetaKey, animSheetKey, isValidMeta } from '../anim/CharacterAnimator';
+import { ANIM_DIR, AUDIO_MANIFEST, CHAR_KEYS, IMAGE_MANIFEST } from '../assets/manifest';
 import { ensurePlaceholders } from '../assets/placeholders';
 import { AudioManager } from '../audio/AudioManager';
 import { BASE_H, BASE_W } from '../constants';
@@ -23,16 +24,37 @@ export class PreloadScene extends Phaser.Scene {
       bar.clear().fillStyle(0x9a1c14).fillRect(cx - 298, cy - 12, 596 * p, 24);
       bar.fillStyle(0xd8503a, 0.5).fillRect(cx - 298, cy - 12, 596 * p, 8);
     });
-    this.load.on('loaderror', (f: Phaser.Loader.File) => this.failed.push(f.key));
+    this.load.on('loaderror', (f: Phaser.Loader.File) => { if (!f.key.startsWith('anim')) this.failed.push(f.key); });
 
     for (const e of IMAGE_MANIFEST) this.load.image(e.key, e.path);
     for (const a of AUDIO_MANIFEST) this.load.audio(a.key, a.urls);
+    // Optional animation sheets: many do not exist yet, a failed meta file is simply ignored.
+    for (const k of CHAR_KEYS) this.load.json(animMetaKey(k), `${ANIM_DIR}/${k}.json`);
   }
 
   create(): void {
     const n = ensurePlaceholders(this);
     if (n > 0) console.info(`[assets] ${n} imagenes generadas como placeholder; ${this.failed.length} archivos fallidos`);
     AudioManager.init(this.game);
-    this.scene.start('MainMenu');
+    this.loadAnimSheets();
   }
+
+  /** Second load stage: spritesheets for every character whose anim json was found and valid. */
+  private loadAnimSheets(): void {
+    const found: string[] = [];
+    for (const k of CHAR_KEYS) {
+      const m = this.cache.json.get(animMetaKey(k));
+      if (!isValidMeta(m)) continue;
+      this.load.spritesheet(animSheetKey(k), `${ANIM_DIR}/${k}.png`, { frameWidth: m.frameWidth, frameHeight: m.frameHeight });
+      found.push(k);
+    }
+    if (!found.length) { this.scene.start('MainMenu'); return; }
+    this.load.once('complete', () => {
+      const ok = found.filter((k) => this.textures.exists(animSheetKey(k)));
+      console.info(`[anim] sheets: ${ok.join(', ') || 'none'}`);
+      this.scene.start('MainMenu');
+    });
+    this.load.start();
+  }
+
 }

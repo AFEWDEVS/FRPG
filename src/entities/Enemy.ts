@@ -32,6 +32,8 @@ const BOSS_LEVEL: Record<string, number> = { thorn_queen: 6, ogre_poet: 9, jealo
 export class Enemy extends Entity {
   /** Base level for enemies spawned in the current area (set by GameScene before spawning). */
   static areaLevel = 1;
+  /** scene.time.now when the current area was built (spawn dust only for late spawns). */
+  static areaStart = 0;
 
   readonly def: EnemyDef;
   readonly champion: boolean;
@@ -105,6 +107,7 @@ export class Enemy extends Entity {
     } else if (def.boss) {
       this.addLabel(def.name, '#ffd24a');
     }
+    this.anim.spawnIn(scene.time.now - Enemy.areaStart > 1500);
     this.bar = scene.add.graphics();
     this.add(this.bar);
   }
@@ -552,7 +555,7 @@ export class Enemy extends Entity {
     this.bar?.clear();
     this.label?.setVisible(false);
     this.ctx.onEnemyDied(this);
-    this.scene.tweens.add({ targets: this, alpha: 0, duration: 650, delay: 150, onComplete: () => this.destroy() });
+    this.anim.die(false, () => this.destroy());
   }
 
   /** Remove without death effects (boss clones, area cleanup). */

@@ -80,7 +80,7 @@ export class LootManager {
       px = cx; py = cy;
       break;
     }
-    const d = new LootDrop(this.scene, { gx: px, gy: py, item: o.item, gold: o.gold }, (drop, p) => this.onClick(drop, p));
+    const d = new LootDrop(this.scene, { gx: px, gy: py, item: o.item, gold: o.gold, from: { gx, gy } }, (drop, p) => this.onClick(drop, p));
     this.drops.push(d);
     if (o.item) AudioManager.sfx('drop_item', { volume: 0.6 });
   }
@@ -113,10 +113,12 @@ export class LootManager {
         return;
       }
       AudioManager.sfx('item_pickup');
+      sc.vfx.emit('stars', w.x, w.y - 20, 6, { tint: 0xffffff, scale: 0.15, speed: [40, 150], life: 500 });
       sc.vfx.floatingText(d.item.name, w.x, w.y - 40, { size: 15, duration: 900, rise: 30 });
     } else {
       GameState.addGold(d.gold);
       AudioManager.sfx('gold_pickup');
+      sc.vfx.emit('sparks', w.x, w.y - 20, 8, { tint: 0xffd24a, scale: 0.14, speed: [60, 200], life: 500 });
       sc.vfx.floatingText(`+${d.gold} oro`, w.x, w.y - 40, { color: '#ffd24a', size: 16, duration: 800, rise: 30 });
     }
     if (this.target === d) this.target = null;

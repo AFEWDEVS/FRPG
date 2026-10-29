@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { AudioManager } from '../audio/AudioManager';
 import { BASE_H, BASE_W } from '../constants';
-import { CREDITS } from '../data/story';
+import { CREDITS, CREDITS_JOKE } from '../data/story';
 import { coverBackground, textStyle } from '../ui/widgets';
 
 /** Scrolling credits; any key / click speeds out. Returns to the main menu. */
@@ -9,14 +9,19 @@ export class CreditsScene extends Phaser.Scene {
   private roll!: Phaser.GameObjects.Container;
   private endY = 0;
   private leaving = false;
+  private joked = false;
 
   constructor() { super('Credits'); }
 
   create(): void {
     this.leaving = false;
+    this.joked = false;
     this.cameras.main.fadeIn(800);
     AudioManager.playMusic('ending');
-    coverBackground(this, 'bg_title', BASE_W, BASE_H);
+    const bg = coverBackground(this, 'bg_title', BASE_W, BASE_H);
+    this.tweens.add({ targets: bg, scale: bg.scale * 1.12, duration: 60000, ease: 'Sine.easeInOut' });
+    this.add.rectangle(BASE_W / 2, 28, BASE_W, 56, 0x000000).setDepth(8);
+    this.add.rectangle(BASE_W / 2, BASE_H - 28, BASE_W, 56, 0x000000).setDepth(8);
     this.add.rectangle(BASE_W / 2, BASE_H / 2, BASE_W, BASE_H, 0x000000, 0.72);
     if (this.textures.exists('vfx_heart')) {
       this.add.particles(0, BASE_H + 20, 'vfx_heart', {
@@ -45,8 +50,16 @@ export class CreditsScene extends Phaser.Scene {
   }
 
   update(_t: number, dt: number): void {
+    if (this.joked) return;
     this.roll.y -= (dt / 1000) * 52;
-    if (this.roll.y < this.endY) this.leave();
+    if (this.roll.y < this.endY) this.joke();
+  }
+
+  private joke(): void {
+    this.joked = true;
+    const t = this.add.text(BASE_W / 2, BASE_H / 2, CREDITS_JOKE, { ...textStyle(30, '#ffe0b0'), align: 'center', wordWrap: { width: 900 }, lineSpacing: 10, stroke: '#140a04', strokeThickness: 5 }).setOrigin(0.5).setDepth(10).setAlpha(0);
+    this.tweens.add({ targets: t, alpha: 1, duration: 1800 });
+    this.time.delayedCall(7500, () => this.leave());
   }
 
   private leave(): void {

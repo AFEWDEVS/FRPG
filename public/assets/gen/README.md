@@ -158,3 +158,18 @@ All files produced by tools/art (see tools/art/README.md). `_raw/` holds raw gen
 | title.jpg | 1920x1080 |
 
 Notes: wall blocks (tiles/*_wall.png) are 256 wide, ~256-265 tall (shorter than the 320 requested; bottom aligned). Ground tiles are exact 256x128 diamonds.
+
+
+## anim/ (animation sheets)
+
+`anim/<key>.png` + `anim/<key>.json` for all 20 characters. 4x4 uniform grid, cell = frameWidth x frameHeight (varies per character, see json), feet aligned to cell bottom-center (4px pad), all frames of a character share one scale (character height ~= static sprite height). Frames: 0-3 walk_down (facing down-right), 4-7 walk_up (facing up-right), 8-11 attack_down (NPCs: talk/gesture), 12-13 idle, 14 hurt, 15 death. Flip X for left. Anim defs live in each json (`anims`). Regenerate: `python tools/art/anim_gen.py key` (raw to `_raw/anim/`), then `python tools/art/anim_sheet.py key`. Previews: `tools/art/previews/anim_<key>.gif` and `_sheet.png`. Cells are wide because attack FX and the death pose extend sideways; anchor is feet-centroid, so use origin (0.5, 1).
+
+## fx/
+
+- `levelup_angel.png` + `.json`: 6-frame horizontal strip, 192x192 frames, 12 fps.
+- `cast_circle.png`: 512x512 white circle with luminance alpha, tint in game.
+- `emotes.png` + `emotes.json`: 4x3 grid of 64x64 cells; json `frames` maps name to index (heart, sweat, exclamation, question, angry, music, sparkle, zzz, blush, broken_heart, dots, laugh).
+
+## Audit
+
+`python tools/art/audit.py [--fix]` scans characters/props/ui/icons for border-connected black or opaque backgrounds. Current result: 0 flagged (icons are rounded dark tiles by design, with transparent corners).

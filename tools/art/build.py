@@ -183,7 +183,7 @@ if __name__ == "__main__":
     if "bg" in g: do_bg()
 
 def do_portraits():
-    names = ["hero_knight", "hero_mage", "hero_ranger", "amaranta", "elder", "merchant", "healer", "bard", "malvarron"]
+    names = ["hero_knight", "hero_mage", "hero_ranger", "amaranta", "elder", "merchant", "healer", "bard", "malvarron", "thorn_queen", "ogre_poet", "jealous_gargoyle"]
     os.makedirs(os.path.join(GEN, "portraits"), exist_ok=True)
     ims = []
     for n in names:

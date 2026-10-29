@@ -72,10 +72,10 @@ export function generateOverworld(worldId: WorldId, seed: number): TileMap {
       const r = rng.next();
       const forest = g === 'w1_forest_floor';
       if (worldId === 'w1') {
-        if (forest && r < 0.2) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
-        else if (!forest && r < 0.035) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
-        else if (r < 0.05) map.addProp({ key: rng.pick(bio.blockDeco), gx: i, gy: j, w: 1, h: 1, blocks: true });
-        else if (r < 0.09) map.addProp({ key: rng.pick(bio.deco), gx: i, gy: j, w: 1, h: 1, blocks: false });
+        if (forest && r < 0.1) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
+        else if (!forest && r < 0.018) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
+        else if (r < 0.05 && (forest || r >= 0.018)) map.addProp({ key: rng.pick(bio.blockDeco), gx: i, gy: j, w: 1, h: 1, blocks: true });
+        else if (r < 0.09 || (forest && r < 0.17)) map.addProp({ key: rng.pick(bio.deco), gx: i, gy: j, w: 1, h: 1, blocks: false });
       } else {
         if (r < 0.04) map.addProp({ key: rng.pick(bio.trees), gx: i, gy: j, w: 1, h: 1, blocks: true });
         else if (r < 0.075) map.addProp({ key: rng.pick(bio.blockDeco), gx: i, gy: j, w: 1, h: 1, blocks: true });

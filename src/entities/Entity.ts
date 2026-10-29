@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { CHAR_SCALE, ISO } from '../constants';
 import { gridToWorld } from '../iso/iso';
 import { ProcAnim } from './ProcAnim';
+import { CharacterAnimator, animMetaKey, animSheetKey, isValidMeta } from '../anim/CharacterAnimator';
 
 export type EntityKind = 'player' | 'enemy' | 'npc';
 
@@ -34,6 +35,7 @@ export abstract class Entity extends Phaser.GameObjects.Container {
   /** Tiles per second. */
   speed = 3;
   facingLeft = false;
+  facingUp = false;
   readonly radius: number;
   readonly sprite: Phaser.GameObjects.Image;
   readonly shadow: Phaser.GameObjects.Ellipse;
@@ -53,6 +55,10 @@ export abstract class Entity extends Phaser.GameObjects.Container {
     this.sprite = scene.add.image(0, 0, o.textureKey).setOrigin(0.5, 1).setScale(sc);
     this.add([this.shadow, this.sprite]);
     this.anim = new ProcAnim(this.sprite, this.shadow, sc);
+    const meta = scene.cache.json.get(animMetaKey(o.textureKey));
+    if (isValidMeta(meta) && scene.textures.exists(animSheetKey(o.textureKey))) {
+      this.anim.setAnimator(new CharacterAnimator(this.sprite, o.textureKey, meta, this.sprite.height));
+    }
     scene.add.existing(this);
     this.syncPosition();
   }
@@ -76,6 +82,11 @@ export abstract class Entity extends Phaser.GameObjects.Container {
     if (Math.abs(sx) > 0.01) {
       this.facingLeft = sx < 0;
       this.anim.setFacingLeft(this.facingLeft);
+    }
+    const sy = dgx + dgy; // screen y direction (negative = walking away from camera)
+    if (Math.abs(sy) > 0.2 * Math.hypot(sx, sy)) {
+      this.facingUp = sy < 0;
+      this.anim.setFacingUp(this.facingUp);
     }
   }
 

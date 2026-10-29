@@ -30,6 +30,14 @@ export interface SkillCtx {
 }
 type Exec = (x: SkillCtx) => boolean | void;
 
+/** Cast time (ms) of caster skills: ground circle + cast bar appear, the executor fires when it completes. */
+export const CAST_MS: Record<string, number> = {
+  bola_fuego: 320, meteoro: 600, nova_hielo: 300, armadura_escarcha: 250, rayo_encadenado: 250, serenata_encantadora: 450,
+  lluvia_flechas: 400, martillo_celestial: 350, escudo_radiante: 280,
+};
+/** Skills with a ground target: radius (tiles) of the destination telegraph shown while casting. */
+export const GROUND_R: Record<string, number> = { meteoro: 2.5, lluvia_flechas: 3.2 };
+
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const body = (p: Player) => ({ x: p.x, y: p.y - 45 });
 
@@ -82,6 +90,15 @@ export const EXECUTORS: Record<string, Exec> = {
     c.sfx('sword_swing_2', { volume: 0.8 });
     x.lock(dur + 100);
     p.stop();
+    const orbit: Phaser.GameObjects.Image[] = [];
+    for (let i = 0; i < 3; i++) orbit.push(p.scene.add.image(p.x, p.y - 45, 'vfx_slash').setBlendMode(Phaser.BlendModes.ADD).setTint(i === 0 ? 0xffffff : 0xffe8b0).setScale(0.55, 0.3).setAlpha(0.9).setDepth(VFX_DEPTH));
+    let oa = 0, oel = 0;
+    c.addUpdater((dt) => {
+      oel += dt; oa += dt * 0.016;
+      orbit.forEach((im, i) => { const a = oa + (i * Math.PI * 2) / 3; im.setPosition(p.x + Math.cos(a) * 70, p.y - 45 + Math.sin(a) * 36).setRotation(a + Math.PI / 2 + 0.3); im.setDepth(VFX_DEPTH + (Math.sin(a) > 0 ? 1 : -3)); });
+      if (oel > dur || p.dead) { orbit.forEach((im) => p.scene.tweens.add({ targets: im, alpha: 0, duration: 120, onComplete: () => im.destroy() })); return false; }
+      return true;
+    });
     let flip = false;
     c.every(dur, 150, (i) => {
       if (p.dead) return;
@@ -118,7 +135,6 @@ export const EXECUTORS: Record<string, Exec> = {
       return true;
     });
     c.vfx.explosion(p.x, p.y - 40, { element: 'holy', radius: 70, power: 0.8, shake: false, decal: false });
-    c.vfx.floatingText('¡Escudo Radiante!', p.x, p.y - 130, { color: '#ffe680', size: 18 });
   },
 
   aura_coraje: (x) => {
@@ -173,6 +189,8 @@ export const EXECUTORS: Record<string, Exec> = {
     const n = Math.floor(x.v('n')), pct = x.v('dmg');
     c.sfx('buff', {});
     c.vfx.shockwave(p.x, p.y, { element: 'holy', radius: 140, duration: 400 });
+    c.vfx.decal('magic_circle', p.x, p.y, { scale: 0.6, tint: 0xffe680, duration: 1200, blend: 'ADD', spin: 160, alpha: 0.8 });
+    c.vfx.flash(p.x, p.y - 60, { element: 'holy', size: 200, ms: 220 });
     for (let i = 0; i < n; i++) {
       const a0 = (i / n) * Math.PI * 2;
       let t = 0;
@@ -203,7 +221,8 @@ export const EXECUTORS: Record<string, Exec> = {
     const burnDps = ((x.d.damageMin + x.d.damageMax) / 2) * (x.v('burn') / 100);
     c.sfx('fireball_cast', {});
     const b = body(p);
-    c.vfx.flash(b.x, b.y, { element: 'fire', size: 140, ms: 180 });
+    c.vfx.flash(b.x, b.y, { element: 'fire', size: 180, ms: 200 });
+    c.vfx.emit('fire', b.x, b.y, 8, { tint: 0xff9a3a, scale: 0.4, scaleEnd: 0.05, speed: [40, 160], life: 400 });
     c.spawnProjectile({
       owner: 'player', gx: p.gx, gy: p.gy, dx: x.dx, dy: x.dy, speed: 11, range: x.def.range, radius: 0.5, element: 'fire', size: 1.2, light: 190, height: 46,
       onHit: (pr, tg) => {
@@ -211,6 +230,8 @@ export const EXECUTORS: Record<string, Exec> = {
         const w = { x: pr.worldX, y: pr.worldY + 30 };
         c.vfx.explosion(w.x, w.y - 10, { element: 'fire', radius: r * 45, power: 1.2 });
         c.sfx('fire_explosion', { volume: 0.9 });
+        c.vfx.decal('scorch', w.x, w.y + 6, { scale: r * 0.5, tint: 0x100806, duration: 5000, alpha: 0.75, blend: 'NORMAL' });
+        c.every(1100, 140, () => { c.vfx.emit('fire', w.x + rnd(-50, 50), w.y + rnd(-10, 10), 2, { tint: 0xff7a1e, scale: 0.35, scaleEnd: 0.05, speed: [10, 40], life: 550 }); c.vfx.emit('glow', w.x + rnd(-40, 40), w.y, 1, { tint: 0xffb050, scale: 0.12, scaleEnd: 0.02, angle: [260, 280], speed: [40, 110], life: 800 }); });
         void tg;
         for (const e of areaHit(x, pr.gx, pr.gy, r, pct, 'fire', { knockback: 0.8 })) e.burn(burnDps, 3000);
       },
@@ -228,6 +249,8 @@ export const EXECUTORS: Record<string, Exec> = {
     c.sfx('fireball_cast', { volume: 1 });
     const tele = c.vfx.telegraphCircle(gx, gy, R, 1200, 0xff6a2a);
     const circle = c.vfx.groundCircle(w.x, w.y, { scale: R * 0.62, tint: 0xff8a3a, alpha: 0.9, spin: 1500 });
+    const streak = p.scene.add.image(w.x + 220, w.y - 620, 'fx_streak').setOrigin(1, 0.5).setTint(0xffa040).setBlendMode(Phaser.BlendModes.ADD).setScale(5.5, 2.6).setDepth(VFX_DEPTH - 1).setRotation(Math.atan2(620, -220));
+    const shadow = p.scene.add.image(w.x, w.y, 'fx_disc').setTint(0x000000).setScale(0.05, 0.025).setAlpha(0).setDepth(0.6);
     const rock = p.scene.add.image(w.x + 220, w.y - 620, 'vfx_fire').setTint(0xffb050).setBlendMode(Phaser.BlendModes.ADD).setScale(1.1).setDepth(VFX_DEPTH);
     const core = p.scene.add.image(rock.x, rock.y, 'vfx_flare').setTint(0xfff0c0).setBlendMode(Phaser.BlendModes.ADD).setScale(0.8).setDepth(VFX_DEPTH + 1);
     c.vfx.glow(core, 0xff7a1e, 6);
@@ -236,16 +259,22 @@ export const EXECUTORS: Record<string, Exec> = {
     c.addUpdater((dt) => {
       t += dt;
       const k = Math.min(1, t / 1200), e = k * k;
-      rock.setPosition(w.x + 220 * (1 - e), w.y - 620 * (1 - e)); core.setPosition(rock.x, rock.y);
+      rock.setPosition(w.x + 220 * (1 - e), w.y - 620 * (1 - e)); core.setPosition(rock.x, rock.y); streak.setPosition(rock.x, rock.y); rock.rotation += 0.15;
+      shadow.setScale((0.2 + 0.8 * e) * R * 0.5, (0.2 + 0.8 * e) * R * 0.25).setAlpha(0.6 * e);
+      c.vfx.emit('smoke', rock.x, rock.y, 1, { tint: 0x2a2220, scale: 0.4, scaleEnd: 1.0, alpha: 0.4, life: 700, speed: [0, 20] });
       if (light) { light.x = rock.x; light.y = rock.y; }
       c.vfx.trail(rock.x, rock.y, 'fire', 2.2);
       if (k < 1) return true;
-      rock.destroy(); core.destroy(); circle?.destroy(); tele.destroy();
+      rock.destroy(); core.destroy(); streak.destroy(); shadow.destroy(); circle?.destroy(); tele.destroy();
       if (light) light.dead = true;
       c.vfx.explosion(w.x, w.y - 10, { element: 'fire', radius: R * 60, power: 2.2 });
       c.vfx.shockwave(w.x, w.y, { element: 'fire', radius: R * 110, duration: 600 });
       c.vfx.screenShake(0.012, 350);
       c.vfx.hitStop(80);
+      c.vfx.screenFlash(0xffd8a0, 120);
+      c.vfx.decal('scorch', w.x, w.y + 6, { scale: R * 0.6, tint: 0x0c0604, duration: 8000, alpha: 0.85, blend: 'NORMAL' });
+      c.vfx.emit('dirt', w.x, w.y - 10, 22, { tint: 0x5a3a28, scale: 0.4, speed: [160, 460], life: 900 });
+      c.vfx.fx.hitSpark(w.x, w.y - 20, -Math.PI / 2, 'fire', true);
       c.sfx('fire_explosion', {});
       areaHit(x, gx, gy, R, pct, 'fire', { knockback: 1.2 });
       // burning ground
@@ -256,6 +285,7 @@ export const EXECUTORS: Record<string, Exec> = {
         if (acc >= 500) {
           acc = 0;
           c.vfx.emit('fire', w.x + rnd(-100, 100), w.y + rnd(-30, 30), 6, { tint: 0xff7a1e, scale: 0.6, scaleEnd: 0.1, speed: [10, 50], life: 600 });
+          c.vfx.emit('glow', w.x + rnd(-90, 90), w.y, 2, { tint: 0xffb050, scale: 0.12, scaleEnd: 0.02, angle: [255, 285], speed: [50, 140], life: 900 });
           c.vfx.emit('smoke', w.x + rnd(-80, 80), w.y - 10, 1, { tint: 0x2a2220, scale: 0.4, scaleEnd: 0.9, alpha: 0.3, life: 900 });
           for (const en of c.enemiesInCircle(gx, gy, R)) c.playerHit(en, fire, 'fire', { knockback: 0, silent: true, dot: true });
         }
@@ -277,6 +307,9 @@ export const EXECUTORS: Record<string, Exec> = {
     c.vfx.shockwave(p.x, p.y, { element: 'ice', radius: R * 90, duration: 520, thick: true });
     c.vfx.shockwave(p.x, p.y, { element: 'ice', radius: R * 60, duration: 380 });
     c.vfx.decal('magic_circle', p.x, p.y, { scale: R * 0.5, tint: 0x8fdcff, duration: 900, blend: 'ADD', spin: 90, alpha: 0.7 });
+    c.vfx.fx.shards(p.x, p.y - 8, 'ice', 18, R * 85, 520);
+    c.vfx.decal('magic_circle', p.x, p.y + 2, { scale: R * 0.6, tint: 0xb8ecff, duration: 3500, blend: 'NORMAL', alpha: 0.35 });
+    c.every(1400, 120, () => c.vfx.emit('smoke', p.x + rnd(-R * 70, R * 70), p.y + rnd(-20, 10), 1, { tint: 0xcff2ff, scale: 0.3, scaleEnd: 0.8, alpha: 0.28, life: 1200, speed: [5, 25] }));
     for (let i = 0; i < 20; i++) {
       const a = (i / 20) * Math.PI * 2;
       c.vfx.emit('stars', p.x + Math.cos(a) * 30, p.y - 20 + Math.sin(a) * 15, 1, { tint: 0xcff2ff, scale: 0.26, speed: [R * 90, R * 110], life: 520 });
@@ -304,7 +337,6 @@ export const EXECUTORS: Record<string, Exec> = {
     const circle = c.vfx.groundCircle(p.x, p.y, { scale: 0.5, tint: 0x8fdcff, alpha: 0.7, spin: 5000 });
     const end = c.armorUntil;
     c.vfx.explosion(p.x, p.y - 40, { element: 'ice', radius: 60, power: 0.8, shake: false, decal: false });
-    c.vfx.floatingText('Armadura de Escarcha', p.x, p.y - 130, { color: '#8fdcff', size: 18 });
     c.addUpdater(() => {
       circle?.setPosition(p.x, p.y);
       if (c.now > end || c.armorBonus <= 0 || p.dead) { aura.destroy(); circle?.destroy(); c.vfx.emit('stars', p.x, p.y - 40, 8, { tint: 0xcff2ff, scale: 0.16, speed: [40, 120] }); return false; }
@@ -351,12 +383,14 @@ export const EXECUTORS: Record<string, Exec> = {
     const end = c.clampWalkable(p.gx, p.gy, x.gx, x.gy, x.v('dist'));
     if (Math.hypot(end.fx - p.gx, end.fy - p.gy) < 1.2) return false;
     c.sfx('portal', { volume: 0.7 });
+    c.vfx.fx.implode(p.x, p.y - 40, 'arcane', 220);
     c.vfx.explosion(p.x, p.y - 40, { element: 'arcane', radius: 70, power: 1, shake: false, decal: false });
     c.vfx.decal('magic_circle', p.x, p.y, { scale: 0.5, tint: 0xc060ff, duration: 700, blend: 'ADD', spin: 180 });
     p.warp(end.fx, end.fy);
     c.vfx.explosion(p.x, p.y - 40, { element: 'arcane', radius: 70, power: 1, shake: false, decal: false });
     c.vfx.decal('magic_circle', p.x, p.y, { scale: 0.5, tint: 0xc060ff, duration: 700, blend: 'ADD', spin: -180 });
-    c.vfx.flash(p.x, p.y - 45, { element: 'arcane', size: 220, ms: 220 });
+    c.vfx.flash(p.x, p.y - 45, { element: 'arcane', size: 260, ms: 260 });
+    c.vfx.fx.shards(p.x, p.y - 20, 'arcane', 10, 90, 380);
     p.sprite.setAlpha(0.2);
     p.scene.tweens.add({ targets: p.sprite, alpha: 1, duration: 260 });
     x.lock(120);
@@ -368,6 +402,7 @@ export const EXECUTORS: Record<string, Exec> = {
     const n = Math.floor(x.v('n')), pct = x.v('dmg');
     const spread = Math.min(0.9, 0.2 * (n - 1));
     c.sfx('arrow_shoot', {});
+    c.vfx.flash(p.x, p.y - 45, { element: 'physical', size: 100, ms: 140 });
     for (let i = 0; i < n; i++) {
       const a = x.angle + (n === 1 ? 0 : -spread / 2 + (spread * i) / (n - 1));
       const r = rollPlayerDamage(x.d, pct);
@@ -396,10 +431,13 @@ export const EXECUTORS: Record<string, Exec> = {
       const tgx = end.fx + Math.cos(a) * rr, tgy = end.fy + Math.sin(a) * rr;
       const tw = gridToWorld(tgx, tgy);
       const img = p.scene.add.image(tw.x - 40, tw.y - 420, 'fx_arrow').setRotation(Math.atan2(420, 40)).setScale(1.1).setTint(0xe8d8b0).setDepth(VFX_DEPTH - 2);
+      const st = p.scene.add.image(tw.x - 40, tw.y - 420, 'fx_streak').setOrigin(1, 0.5).setRotation(Math.atan2(420, 40)).setScale(0.7, 0.5).setTint(0xfff0c0).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.6).setDepth(VFX_DEPTH - 3);
+      p.scene.tweens.add({ targets: st, x: tw.x, y: tw.y, duration: 240, ease: 'Quad.easeIn', onComplete: () => st.destroy() });
       p.scene.tweens.add({
         targets: img, x: tw.x, y: tw.y, duration: 240, ease: 'Quad.easeIn',
         onComplete: () => {
-          img.destroy();
+          img.setPosition(tw.x, tw.y - 8).setScale(0.8);
+          p.scene.tweens.add({ targets: img, alpha: 0, delay: 350, duration: 400, onComplete: () => img.destroy() });
           c.vfx.impact(tw.x, tw.y, 'physical', false);
           c.vfx.emit('smoke', tw.x, tw.y, 1, { tint: 0x6a5a48, scale: 0.12, scaleEnd: 0.3, alpha: 0.4, life: 400, speed: [0, 20] });
           for (const e of c.enemiesInCircle(tgx, tgy, 0.9)) c.playerHit(e, pct, 'physical', { knockback: 0.15, silent: true });
@@ -441,6 +479,7 @@ export const EXECUTORS: Record<string, Exec> = {
     const trap = { gx: end.fx, gy: end.fy, armedAt: c.now + 500, until: c.now + 30000, fx: [circle, thorn].filter(Boolean) as Phaser.GameObjects.Image[], light, dead: false };
     list.push(trap);
     c.vfx.impact(w.x, w.y, 'nature', false);
+    c.vfx.emit('stars', w.x, w.y - 6, 6, { tint: 0x9aff7a, scale: 0.14, speed: [20, 80], angle: [250, 290], life: 600 });
     c.sfx('buff', { volume: 0.5 });
     c.addUpdater(() => {
       if (trap.dead) return false;
@@ -449,6 +488,7 @@ export const EXECUTORS: Record<string, Exec> = {
       if (c.now < trap.armedAt) return true;
       if (!c.hostiles().some((e) => Math.hypot(e.gx - trap.gx, e.gy - trap.gy) < 1.0 + e.radius * 0.3)) return true;
       trap.dead = true; trap.fx.forEach((f) => f.destroy()); if (trap.light) trap.light.dead = true;
+      c.vfx.fx.vines(w.x, w.y, 0x3f9a34, 9);
       c.vfx.explosion(w.x, w.y - 10, { element: 'nature', radius: 90, power: 1.2, shake: true, decal: false });
       c.vfx.emit('stars', w.x, w.y - 20, 14, { tint: 0x9aff7a, scale: 0.22, speed: [60, 260], life: 600 });
       c.vfx.emit('sparks', w.x, w.y - 30, 14, { tint: 0xd0ff90, scale: 0.18, speed: [100, 340], life: 600 });
@@ -471,7 +511,10 @@ export const EXECUTORS: Record<string, Exec> = {
     c.vfx.lightPulse(p.x, p.y - 40, 300, 800, 0.8);
     c.every(900, 140, (i) => c.vfx.emit('stars', p.x + Math.sin(i * 1.7) * 40, p.y - 90 - i * 6, 1, { tint: 0xff9ac8, scale: 0.22, speed: [20, 60], life: 800 }));
     if (!near.length) { c.vfx.floatingText('Nadie a quien enamorar...', p.x, p.y - 130, { size: 16, color: '#ff9ac8' }); }
-    for (const e of near) c.after(300, () => e.charm(dur));
+    for (const e of near) {
+      for (let i = 0; i < 3; i++) c.after(i * 140, () => { if (!e.dead) c.vfx.fx.note(p.x, p.y - 80, e.x, e.y - 60, i % 2 ? 0xff9ac8 : 0xffd0e8); });
+      c.after(300, () => { e.charm(dur); c.vfx.fx.pulse(() => ({ x: e.x, y: e.y - 40 }), 0xff6aae, Math.min(dur, 1500)); });
+    }
     x.lock(500 / x.d.castSpeed);
   },
 

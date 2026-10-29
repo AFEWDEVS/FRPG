@@ -141,6 +141,9 @@ PORT = {
     "merchant": ("npc_merchant", "the stout cheerful merchant woman Gertrudis"),
     "healer": ("npc_healer", "the nun healer Hermana Melisa"),
     "bard": ("npc_bard", "the goofy bard Pipo"),
+    "thorn_queen": ("thorn_queen", "the Thorn Queen, a rose-crowned thorny vine queen boss"),
+    "ogre_poet": ("ogre_poet", "the Ogre Poet, a hulking green ogre bard with a red beret, feather quill and poem scroll"),
+    "jealous_gargoyle": ("jealous_gargoyle", "the Jealous Gargoyle, a brooding winged stone gargoyle boss"),
     "malvarron": ("malvarron", "the vain flamboyant wizard Lord Malvarron with his huge mustache"),
 }
 for pid, (cid, desc) in PORT.items():

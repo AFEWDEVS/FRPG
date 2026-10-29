@@ -21,6 +21,8 @@ import { VfxManager } from '../vfx/VfxManager';
 import { LootManager, monsterLevel } from '../items/LootManager';
 import { buildArea } from '../world/AreaFactory';
 import { Darkness, LIGHT_PROPS, type StaticLight } from '../world/Darkness';
+import { Ambient, type FireSpot } from '../fx/Ambient';
+import { applyGrade } from '../fx/PostFx';
 import type { Marker, TileMap } from '../world/TileMap';
 import { WorldRenderer } from '../world/WorldRenderer';
 import type { UIScene } from './UIScene';
@@ -45,6 +47,14 @@ export class GameScene extends Phaser.Scene {
   combat!: CombatSystem;
   private worldRenderer!: WorldRenderer;
   private darkness!: Darkness;
+  private ambientFx?: Ambient;
+  /** Camera zoom: default shows more world than 1:1; mouse wheel / setZoomTarget (pinch) changes it. Kept across areas. */
+  static zoomPref = 0.8;
+  static readonly ZOOM_MIN = 0.55;
+  static readonly ZOOM_MAX = 1.25;
+  private zoomTarget = GameScene.zoomPref;
+  private look = { x: 0, y: 0 };
+  private lastPos = { x: 0, y: 0 };
   private inputCtl!: InputController;
   private interactables: Marker[] = [];
   private pending: Marker | null = null;
@@ -78,20 +88,31 @@ export class GameScene extends Phaser.Scene {
     this.lockPortals();
     this.worldRenderer = new WorldRenderer(this, this.map);
     Enemy.areaLevel = enemyAreaLevel(this.tr.areaId, this.floor);
+    Enemy.areaStart = this.time.now;
     this.spawnEntities(built.ref.entry);
     this.loot = new LootManager(this);
     this.combat = new CombatSystem(this);
 
-    this.cameras.main.startFollow(this.player, true, 0.12, 0.12).setRoundPixels(false);
+    const cam = this.cameras.main;
+    this.zoomTarget = GameScene.zoomPref;
+    cam.setZoom(this.zoomTarget);
+    cam.startFollow(this.player, true, 0.1, 0.1).setRoundPixels(false);
+    this.look = { x: 0, y: 0 };
+    this.lastPos = { x: this.player.x, y: this.player.y };
+    applyGrade(this, cam, this.areaDef.grade);
+    this.input.on('wheel', this.onWheel, this);
     this.cameras.main.fadeIn(450);
 
     const lights: StaticLight[] = [];
+    const fires: FireSpot[] = [];
     for (const p of this.map.props) {
       const r = LIGHT_PROPS[p.key];
       if (!r) continue;
       const a = WorldRenderer.propAnchor(p);
       lights.push({ x: a.x, y: a.y - 30, radius: r });
+      if (p.key === 'torch' || p.key === 'brazier' || p.key === 'campfire') fires.push({ x: a.x, y: a.y - 30, key: p.key });
     }
+    this.ambientFx = new Ambient(this, this.areaDef.fx, fires);
     this.darkness = new Darkness(this, this.areaDef.ambient, lights);
     this.vfx.setDarkness(this.darkness);
 
@@ -130,6 +151,8 @@ export class GameScene extends Phaser.Scene {
     this.unsub.forEach((u) => u());
     this.unsub = [];
     this.inputCtl?.destroy();
+    this.input.off('wheel', this.onWheel, this);
+    this.ambientFx?.destroy();
     this.loot?.destroy();
     this.combat?.destroy();
     this.worldRenderer?.destroy();
@@ -320,8 +343,40 @@ export class GameScene extends Phaser.Scene {
     if (!this.player.hasPath && (this.pending || this.pendingNpc)) this.tryInteract();
 
     this.loot.update(time, dtMs);
+    this.updateCamera(dtMs);
     this.worldRenderer.update(this.cameras.main, this.player);
+    this.ambientFx?.update(time, dtMs);
     this.darkness.update(time, this.player.x, this.player.y - 50);
+  }
+
+  // ---------------------------------------------------------------- camera
+
+  /** Smoothly zoom to z (clamped). Wheel and future pinch gestures both go through here. */
+  setZoomTarget(z: number): void {
+    this.zoomTarget = Phaser.Math.Clamp(z, GameScene.ZOOM_MIN, GameScene.ZOOM_MAX);
+    GameScene.zoomPref = this.zoomTarget;
+  }
+
+  private onWheel(ptr: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number): void {
+    if (this.ui()?.coversPoint(ptr.x, ptr.y)) return;
+    this.setZoomTarget(this.zoomTarget * Math.exp(-dy * 0.0014));
+  }
+
+  private updateCamera(dtMs: number): void {
+    const cam = this.cameras.main;
+    const dt = Math.max(1, Math.min(dtMs, 50));
+    const z = cam.zoom + (this.zoomTarget - cam.zoom) * (1 - Math.exp(-dt / 90));
+    cam.setZoom(Math.abs(z - this.zoomTarget) < 0.0005 ? this.zoomTarget : z);
+    // look-ahead in the movement direction
+    const p = this.player;
+    const vx = (p.x - this.lastPos.x) / dt * 1000, vy = (p.y - this.lastPos.y) / dt * 1000;
+    this.lastPos = { x: p.x, y: p.y };
+    const sp = Math.hypot(vx, vy);
+    const k = sp > 5 && sp < 700 ? Math.min(80, sp * 0.22) / sp : 0;
+    const f = 1 - Math.exp(-dt / 380);
+    this.look.x += (vx * k - this.look.x) * f;
+    this.look.y += (vy * k - this.look.y) * f;
+    cam.setFollowOffset(-this.look.x, -this.look.y);
   }
 
 }

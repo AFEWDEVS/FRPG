@@ -18,14 +18,18 @@ const MAX_DYNAMIC = 32;
 /**
  * Screen-space darkness: a RenderTexture filled with the ambient color each frame, with soft holes
  * erased around the player, static light sources and dynamic lights (spells, explosions).
+ * The RT is screen sized and counter-scaled by 1/zoom so it covers the whole view at any camera zoom.
  */
 export class Darkness {
   private rt: Phaser.GameObjects.RenderTexture;
   private light: Phaser.GameObjects.Image;
   private dyn: DynamicLight[] = [];
+  private off: boolean;
 
   constructor(private scene: Phaser.Scene, private ambient: AmbientDef, private statics: StaticLight[]) {
-    this.rt = scene.add.renderTexture(0, 0, BASE_W, BASE_H).setOrigin(0, 0).setScrollFactor(0).setDepth(DARKNESS_DEPTH);
+    this.off = ambient.alpha < 0.15;
+    this.rt = scene.add.renderTexture(BASE_W / 2, BASE_H / 2, BASE_W, BASE_H).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DARKNESS_DEPTH);
+    this.rt.setVisible(!this.off);
     this.light = scene.make.image({ key: 'light_mask', add: false });
     this.light.setOrigin(0.5, 0.5);
   }
@@ -39,23 +43,28 @@ export class Darkness {
 
   /** `playerX/Y` in world space. */
   update(time: number, playerX: number, playerY: number): void {
+    if (this.off) return;
     const cam = this.scene.cameras.main;
+    const z = cam.zoom;
     const rt = this.rt;
+    rt.setScale(1 / z);
     rt.clear();
     rt.fill(this.ambient.color, this.ambient.alpha);
+    const wv = cam.worldView;
     const flick = 1 + Math.sin(time / 170) * 0.015 + Math.sin(time / 53) * 0.01;
-    this.hole(playerX - cam.worldView.x, playerY - cam.worldView.y, this.ambient.lightRadius * flick, 1);
+    this.hole((playerX - wv.x) * z, (playerY - wv.y) * z, this.ambient.lightRadius * flick * z, 1);
     for (const l of this.statics) {
-      const sx = l.x - cam.worldView.x, sy = l.y - cam.worldView.y;
-      if (sx < -l.radius || sy < -l.radius || sx > BASE_W + l.radius || sy > BASE_H + l.radius) continue;
-      this.hole(sx, sy, l.radius * (1 + Math.sin(time / 120 + l.x) * 0.04), 1);
+      const sx = (l.x - wv.x) * z, sy = (l.y - wv.y) * z, r = l.radius * z;
+      if (sx < -r || sy < -r || sx > BASE_W + r || sy > BASE_H + r) continue;
+      const fl = 1 + Math.sin(time / 120 + l.x) * 0.04 + Math.sin(time / 47 + l.y * 0.3) * 0.03;
+      this.hole(sx, sy, r * fl, 1);
     }
     for (let i = this.dyn.length - 1; i >= 0; i--) {
       const l = this.dyn[i];
       if (l.dead || l.strength <= 0.01) { this.dyn.splice(i, 1); continue; }
-      const sx = l.x - cam.worldView.x, sy = l.y - cam.worldView.y;
-      if (sx < -l.radius || sy < -l.radius || sx > BASE_W + l.radius || sy > BASE_H + l.radius) continue;
-      this.hole(sx, sy, l.radius * (0.9 + 0.1 * l.strength), Math.min(1, l.strength));
+      const sx = (l.x - wv.x) * z, sy = (l.y - wv.y) * z, r = l.radius * z;
+      if (sx < -r || sy < -r || sx > BASE_W + r || sy > BASE_H + r) continue;
+      this.hole(sx, sy, r * (0.9 + 0.1 * l.strength), Math.min(1, l.strength));
     }
   }
 

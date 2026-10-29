@@ -10,17 +10,20 @@ import { findPath, nearestWalkable } from '../iso/pathfinding';
 import { gridToWorld } from '../iso/iso';
 import type { GameScene } from '../scenes/GameScene';
 import { cooldownMs, effectiveLevel, manaCostOf, normalizeHotbar, skillValue } from '../skills';
-import { EXECUTORS, type SkillCtx } from '../skills/executors';
-import type { VfxManager } from '../vfx/VfxManager';
+import { CAST_MS, GROUND_R, EXECUTORS, type SkillCtx } from '../skills/executors';
+import type { Element, VfxManager } from '../vfx/VfxManager';
 import { Projectile, type ProjectileOpts } from './Projectile';
 import {
-  CRIT_COLOR, DAMAGE_COLORS, DAMAGE_SFX, armorReduction, playerResist, rollPlayerDamage, shakeFor,
+  CRIT_COLOR, DAMAGE_COLORS, DAMAGE_SFX, armorReduction, missChance, playerResist, rollPlayerDamage, shakeFor,
   type DamageInfo, type HitResult,
 } from './damage';
 import { computeDerived, type DerivedStats } from './stats';
 import type { GridPos } from '../core/types';
 
 type Updater = (dtMs: number) => boolean | void;
+
+const ELEMENT_FX: Record<string, Element> = { physical: 'physical', fire: 'fire', cold: 'ice', lightning: 'lightning', holy: 'holy', arcane: 'arcane', love: 'love', nature: 'nature' };
+const SHOUT_COLOR: Record<string, string> = { physical: '#ffffff', fire: '#ffb060', cold: '#a8e8ff', lightning: '#d9b8ff', holy: '#ffe680', arcane: '#e0a0ff', love: '#ff9ac8', nature: '#a8ff90' };
 
 /**
  * Owns everything that happens during a fight in one GameScene: damage pipeline, player attacks and skills,
@@ -62,6 +65,10 @@ export class CombatSystem {
   private bossActive: Enemy | null = null;
   private noManaAt = 0;
   private slowTinted = false;
+  private casting = false;
+  private lastShout = new Map<string, number>();
+  private healAcc = 0;
+  private healAt = 0;
 
   constructor(readonly scene: GameScene) {
     this.vfx = scene.vfx;
@@ -255,7 +262,23 @@ export class CombatSystem {
   }
   healPlayer(n: number): void {
     if (this.player.dead || n <= 0) return;
+    const before = GameState.life;
     GameState.life = Math.min(this.derived.maxLife, GameState.life + n);
+    this.healAcc += GameState.life - before;
+    if (this.healAcc >= 1 && this.now - this.healAt > 250) {
+      const p = this.player;
+      this.vfx.damageNumber('+' + Math.round(this.healAcc), p.x, p.y - 125, { kind: 'heal' });
+      this.vfx.emit('hearts', p.x, p.y - 60, 2, { tint: 0x8affa0, scale: 0.1, life: 900, speed: [20, 60] });
+      this.healAcc = 0; this.healAt = this.now;
+    }
+  }
+
+  /** RO-style skill shout above a caster (throttled per name). */
+  skillShout(x: number, y: number, name: string, color = '#ffe9a0'): void {
+    const t = performance.now();
+    if (t - (this.lastShout.get(name) ?? 0) < 450) return;
+    this.lastShout.set(name, t);
+    this.vfx.fx.shout('¡' + name + '!!', x, y, color);
   }
 
   // ------------------------------------------------------------ damage pipeline
@@ -263,6 +286,12 @@ export class CombatSystem {
   /** Deals damage from the player to an enemy (resists, armor, crit visuals, knockback, hit-stop, lifesteal). */
   damageEnemy(e: Enemy, info: DamageInfo): HitResult {
     if (e.dead || e.invulnerable) return { dealt: 0, crit: false, killed: false };
+    if (!info.dot && !info.pure && !info.ally && !info.noMiss && Math.random() < missChance(GameState.profile.level, this.derived.dex, e.level ?? 1, e.def.armor ?? 0, info.type !== 'physical', !!e.def.boss)) {
+      const mc = e.center;
+      this.vfx.damageNumber('MISS', mc.x, mc.y - e.sprite.displayHeight * 0.45, { kind: 'miss' });
+      if (!e.aggro) { e.aggro = true; this.alertPack(e); }
+      return { dealt: 0, crit: false, killed: false };
+    }
     const lvl = info.ally ? 1 + Math.floor(GameState.profile.level * 0.5) : GameState.profile.level;
     const mitigated = e.mitigate(info.amount, info.type, info.pure, lvl);
     const amount = Math.max(1, Math.round(mitigated));
@@ -272,16 +301,19 @@ export class CombatSystem {
     const c = e.center;
     const crit = !!info.crit;
     const color = crit ? CRIT_COLOR : info.color ?? DAMAGE_COLORS[info.type];
-    if (!info.dot || dealt >= 2) this.vfx.damageNumber(crit ? `${dealt}!` : String(dealt), c.x, c.y - e.sprite.displayHeight * 0.45, { color, crit, small: !!info.dot });
+    if (!info.dot || dealt >= 2) this.vfx.damageNumber(crit ? `${dealt}!` : String(dealt), c.x, c.y - e.sprite.displayHeight * 0.45, { color, crit, kind: crit ? 'crit' : info.dot ? 'dot' : 'dmg' });
     if (!info.dot) {
       const pal = info.type === 'fire' ? 'fire' : info.type === 'cold' ? 'ice' : info.type === 'lightning' ? 'lightning' : 'physical';
-      this.vfx.impact(c.x, c.y, pal, crit);
+      const fr = info.from ? gridToWorld(info.from.gx, info.from.gy) : { x: c.x - 1, y: c.y };
+      this.vfx.fx.hitSpark(c.x, c.y, Math.atan2(c.y - fr.y, c.x - fr.x), pal, crit);
       if (!info.silent) { const names = DAMAGE_SFX[info.type]; this.sfx(names[Math.floor(Math.random() * names.length)], { volume: 0.6 }); }
-      if (info.knockback && info.from) e.knockFrom(info.from, info.knockback);
+      if (info.knockback && info.from) e.knockFrom(info.from, info.knockback * (crit ? 1.5 : 1));
       if (!info.ally) {
-        if (crit || dealt > e.maxHp * 0.12) this.vfx.hitStop(crit ? 70 : 45);
+        const ratio = dealt / Math.max(1, e.maxHp);
+        if (crit || ratio > 0.04) this.vfx.hitStop(Math.min(120, 24 + ratio * 260 + (crit ? 36 : 0)));
         const sh = shakeFor(dealt, e.maxHp, crit);
         if (sh > 0.0035) this.vfx.screenShake(sh, 100);
+        if (crit) { this.vfx.screenShake(Math.max(sh, 0.006), 130); this.vfx.screenFlash(0xfff4d0, 70); }
       }
     }
     if (!info.ally && this.derived.lifeSteal > 0) this.healPlayer((dealt * this.derived.lifeSteal) / 100);
@@ -300,6 +332,7 @@ export class CombatSystem {
   damagePlayer(info: DamageInfo, src?: Enemy): number {
     const p = this.player;
     if (p.dead || this.invulnerable) return 0;
+    if (!info.pure && !info.dot && Math.random() < 0.03) { this.vfx.damageNumber('MISS', p.x, p.y - 120, { kind: 'miss' }); return 0; }
     const d = this.derived;
     let a = info.amount;
     if (!info.pure) {
@@ -316,7 +349,7 @@ export class CombatSystem {
     }
     if (a <= 0) return 0;
     GameState.life = Math.max(0, GameState.life - a);
-    this.vfx.damageNumber(String(a), p.x, p.y - 120, { color: info.color ?? '#ff5a4a' });
+    this.vfx.damageNumber(String(a), p.x, p.y - 120, { kind: 'player' });
     this.vfx.impact(p.x, p.y - 50, info.type === 'fire' ? 'fire' : info.type === 'cold' ? 'ice' : info.type === 'lightning' ? 'lightning' : 'physical', false);
     p.anim.flash(70);
     this.sfx('player_hurt', { volume: 0.7 });
@@ -359,13 +392,13 @@ export class CombatSystem {
     GameState.life = d.maxLife; GameState.mana = d.maxMana;
     this.derived = d;
     const x = p.x, y = p.y - 50;
+    this.vfx.fx.levelUp(x, p.y, level);
     this.vfx.explosion(x, y, { element: 'holy', radius: 130, power: 1.6, shake: true, decal: false });
     this.vfx.shockwave(x, p.y, { element: 'holy', radius: 420, duration: 900 });
     this.vfx.shockwave(x, p.y, { element: 'holy', radius: 260, duration: 600 });
     this.vfx.decal('magic_circle', x, p.y, { scale: 0.9, tint: 0xffe680, duration: 1800, blend: 'ADD', spin: 120, alpha: 0.9 });
     for (let i = 0; i < 6; i++) this.after(i * 90, () => this.vfx.emit('stars', x + (Math.random() - 0.5) * 60, y - i * 22, 6, { tint: 0xffe680, scale: 0.22, speed: [30, 120], life: 900 }));
     this.vfx.lightPulse(x, y, 520, 1200, 1);
-    this.vfx.floatingText(`¡Nivel ${level}!`, x, p.y - 150, { color: '#ffe680', size: 34, duration: 1800, rise: 80 });
     this.vfx.zoomPunch(1.06, 250, 250, 500);
     this.vfx.screenFlash(0xfff2b0, 220);
   }
@@ -385,6 +418,7 @@ export class CombatSystem {
       this.vfx.floatingText(`+${xp} XP`, e.x, e.y - e.sprite.displayHeight - 20, { color: '#ffd24a', size: 16, duration: 900 });
     }
     this.sfx('enemy_death', { volume: 0.8 });
+    this.vfx.fx.deathPop(c.x, c.y, e.isBoss || e.champion);
     if (e.isBoss) {
       this.vfx.explosion(c.x, c.y, { element: 'holy', radius: 150, power: 2, shake: true });
       this.vfx.shockwave(e.x, e.y, { element: 'holy', radius: 500, duration: 1000 });
@@ -566,6 +600,7 @@ export class CombatSystem {
     this.castUntil = this.now + Math.min(300, interval * 0.5);
     const sw = gridToWorld(dx, dy);
     p.anim.attackLunge(sw.x, sw.y, 170);
+    (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx, dy });
     const cx = p.x, cy = p.y - 45;
     if (cls.basic === 'melee') {
       this.sfx(Math.random() < 0.5 ? 'sword_swing' : 'sword_swing_2', { volume: 0.7 });
@@ -611,11 +646,11 @@ export class CombatSystem {
     });
   }
 
-  /** Execute a skill: checks cooldown / mana, runs the executor, applies cost & cooldown. */
+  /** Execute a skill: checks cooldown / mana, optional cast time (circle + bar + shout), runs the executor, applies cost & cooldown. */
   cast(skillId: string, gx: number, gy: number, target?: Enemy): boolean {
     const def = SKILL_BY_ID[skillId];
     const p = this.player;
-    if (!def || p.dead || p.dashing) return false;
+    if (!def || p.dead || p.dashing || this.casting) return false;
     const lvl = effectiveLevel(skillId);
     if (lvl <= 0) { this.vfx.floatingText('Habilidad no aprendida', p.x, p.y - 130, { size: 16, color: '#cccccc' }); return false; }
     if (this.now < this.castUntil) return false;
@@ -627,6 +662,42 @@ export class CombatSystem {
       if (this.now - this.noManaAt > 900) { this.noManaAt = this.now; this.vfx.floatingText('Sin maná', p.x, p.y - 130, { size: 16, color: '#7fa6ff' }); }
       return false;
     }
+    const ct = CAST_MS[skillId] ?? 0;
+    if (ct <= 0) return this.runSkill(skillId, gx, gy, target, 1);
+    // ---- timed cast: ground circle + cast bar + shout, then the executor fires
+    const ms = ct / Math.max(0.5, this.derived.castSpeed);
+    const a = this.aim(gx, gy);
+    p.stop();
+    p.faceGrid(a.dx, a.dy);
+    const sw = gridToWorld(a.dx, a.dy);
+    (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx: a.dx, dy: a.dy, cast: true });
+    p.anim.attackLunge(sw.x * 0.4, sw.y * 0.4, Math.min(ms, 200));
+    this.casting = true;
+    this.castUntil = this.now + ms + 60;
+    const el = ELEMENT_FX[def.element];
+    const gr = GROUND_R[skillId];
+    let ground: { gx: number; gy: number; R: number; wx: number; wy: number } | undefined;
+    if (gr) { const end = this.clampWalkable(p.gx, p.gy, gx, gy, def.range); const w = gridToWorld(end.fx, end.fy); ground = { gx: end.fx, gy: end.fy, R: gr, wx: w.x, wy: w.y }; }
+    const fx = this.vfx.fx.castFx(p.x, p.y, el, ms, { ground });
+    this.skillShout(p.x, p.y - 150, def.name, SHOUT_COLOR[def.element]);
+    this.sfx('buff', { volume: 0.25 });
+    this.after(ms, () => {
+      this.casting = false;
+      fx.destroy();
+      if (p.dead || this.now < this.stunUntil || p.dashing) return;
+      this.castUntil = this.now;
+      const tg = target && !target.dead ? target : undefined;
+      this.runSkill(skillId, tg ? tg.gx : gx, tg ? tg.gy : gy, tg, 0.5, true);
+    });
+    return true;
+  }
+
+  private runSkill(skillId: string, gx: number, gy: number, target: Enemy | undefined, lockMul: number, shouted = false): boolean {
+    const def = SKILL_BY_ID[skillId];
+    const p = this.player;
+    const lvl = effectiveLevel(skillId);
+    const cost = manaCostOf(def, lvl);
+    if (GameState.mana < cost) return false;
     const a = this.aim(gx, gy);
     const spd = def.element === 'physical' || def.element === 'holy' ? this.derived.attackSpeed : this.derived.castSpeed;
     let lock = 300 / spd;
@@ -645,9 +716,13 @@ export class CombatSystem {
       this.cooldowns.set(skillId, { until: this.now + total, total });
       EventBus.emit('skill:cooldown', { skillId, remaining: total, total });
     }
-    this.castUntil = this.now + lock;
+    this.castUntil = this.now + lock * lockMul;
     const sw = gridToWorld(a.dx, a.dy);
     p.anim.attackLunge(sw.x, sw.y, Math.min(220, lock));
+    if (!shouted) {
+      (p as any).animator?.playAttack?.({ x: sw.x, y: sw.y, dx: a.dx, dy: a.dy });
+      this.skillShout(p.x, p.y - 150, def.name, SHOUT_COLOR[def.element]);
+    }
     this.attackReadyAt = Math.max(this.attackReadyAt, this.now + 250);
     GameState.emitVitals();
     return true;

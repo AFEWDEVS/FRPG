@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { gridToWorld } from '../iso/iso';
 import type { Darkness, DynamicLight } from '../world/Darkness';
+import { CombatFx } from './CombatFx';
 
 export interface BurstOptions {
   count?: number;
@@ -46,10 +47,10 @@ interface LayerSpec {
   gravity?: number; angleMin?: number; angleMax?: number; maxAlive: number; rotate?: boolean;
 }
 interface LayerEmit {
-  tint?: number; scale?: number; scaleEnd?: number; life?: number; speed?: [number, number]; alpha?: number; alphaEnd?: number;
+  tint?: number; scale?: number; scaleEnd?: number; life?: number; speed?: [number, number]; alpha?: number; alphaEnd?: number; angle?: [number, number];
 }
 
-interface LayerState { speed: [number, number]; life: number; tint: number; s0: number; s1: number; a0: number; a1: number }
+interface LayerState { speed: [number, number]; life: number; tint: number; s0: number; s1: number; a0: number; a1: number; g0: number; g1: number }
 
 /** Specs for the pooled additive layers (one emitter each, reused forever). */
 const LAYERS: Record<string, LayerSpec> = {
@@ -75,7 +76,9 @@ export class VfxManager {
   private activeTexts = 0;
   private darkness?: Darkness;
 
-  constructor(private scene: Phaser.Scene) { this.ensureTextures(); }
+  readonly fx: CombatFx;
+
+  constructor(readonly scene: Phaser.Scene) { this.ensureTextures(); this.fx = new CombatFx(this); }
 
   /** GameScene wires this once the darkness overlay exists, so effects can punch light through it. */
   setDarkness(d: Darkness): void { this.darkness = d; }
@@ -141,13 +144,13 @@ export class VfxManager {
     if (l) return l;
     const spec = LAYERS[name];
     const tex = `vfx_${spec.tex}`;
-    const st: LayerState = { speed: spec.speed, life: spec.life, tint: 0xffffff, s0: 0.4, s1: 0, a0: 1, a1: 0 };
+    const st: LayerState = { speed: spec.speed, life: spec.life, tint: 0xffffff, s0: 0.4, s1: 0, a0: 1, a1: 0, g0: spec.angleMin ?? 0, g1: spec.angleMax ?? 360 };
     const sMap = new WeakMap<object, [number, number]>(), aMap = new WeakMap<object, [number, number]>();
     const em = this.scene.add.particles(0, 0, this.has(tex) ? tex : '__WHITE', {
       emitting: false,
       lifespan: { onEmit: () => st.life * (0.75 + Math.random() * 0.5) },
       speed: { onEmit: () => st.speed[0] + Math.random() * (st.speed[1] - st.speed[0]) },
-      angle: { min: spec.angleMin ?? 0, max: spec.angleMax ?? 360 },
+      angle: { onEmit: () => st.g0 + Math.random() * (st.g1 - st.g0) },
       gravityY: spec.gravity ?? 0,
       rotate: spec.rotate ? { min: 0, max: 360 } : 0,
       scale: { onEmit: (p?: object) => { if (p) sMap.set(p, [st.s0, st.s1]); return st.s0; }, onUpdate: (p: object, _k: string, t: number) => { const o = sMap.get(p); return o ? o[0] + (o[1] - o[0]) * t : 0; } },
@@ -169,6 +172,7 @@ export class VfxManager {
     l.st.speed = o.speed ?? l.spec.speed;
     l.st.life = o.life ?? l.spec.life;
     l.st.tint = o.tint ?? 0xffffff; l.st.s0 = o.scale ?? 0.4; l.st.s1 = o.scaleEnd ?? 0; l.st.a0 = o.alpha ?? 1; l.st.a1 = o.alphaEnd ?? 0;
+    l.st.g0 = o.angle?.[0] ?? l.spec.angleMin ?? 0; l.st.g1 = o.angle?.[1] ?? l.spec.angleMax ?? 360;
     em.emitParticleAt(x, y, count);
   }
 
@@ -282,39 +286,64 @@ export class VfxManager {
     }
   }
 
-  /** Slash arc sprite (melee swings). `angle` = screen-space radians. */
+  /** Slash arc sprite (melee swings): two layered arcs that sweep through the swing. `angle` = screen-space radians. */
   slashArc(x: number, y: number, angle: number, o: { element?: Element; size?: number; ms?: number } = {}): void {
     if (!this.has('fx_arc')) return;
     const p = PALETTE[o.element ?? 'physical'];
-    const img = this.scene.add.image(x, y, 'fx_arc').setTint(p.core).setBlendMode(Phaser.BlendModes.ADD).setDepth(VFX_DEPTH);
-    const s = (o.size ?? 160) / 256;
-    img.setRotation(angle + Math.PI / 2).setScale(s * 0.6).setAlpha(1);
-    this.scene.tweens.add({ targets: img, scale: s, alpha: 0, duration: o.ms ?? 220, ease: 'Cubic.easeOut', onComplete: () => img.destroy() });
+    const size = o.size ?? 160, s = size / 256, ms = o.ms ?? 220, base = angle + Math.PI / 2;
+    const a = this.scene.add.image(x, y, 'fx_arc').setTint(p.mid).setBlendMode(Phaser.BlendModes.ADD).setDepth(VFX_DEPTH).setScale(s * 0.7).setAlpha(0.9).setRotation(base - 0.75);
+    const b = this.scene.add.image(x, y, 'fx_arc').setTint(p.core).setBlendMode(Phaser.BlendModes.ADD).setDepth(VFX_DEPTH + 1).setScale(s * 0.6).setAlpha(1).setRotation(base - 0.75);
+    this.scene.tweens.add({ targets: a, rotation: base + 0.75, scale: s * 1.1, alpha: 0, duration: ms, ease: 'Cubic.easeOut', onComplete: () => a.destroy() });
+    this.scene.tweens.add({ targets: b, rotation: base + 0.75, scale: s * 0.95, alpha: 0, duration: ms * 0.8, ease: 'Cubic.easeOut', onComplete: () => b.destroy() });
+    const tx = x + Math.cos(angle) * size * 0.42, ty = y + Math.sin(angle) * size * 0.3, deg = (angle * 180) / Math.PI;
+    this.emit('sparks', tx, ty, 4, { tint: p.core, scale: 0.12, speed: [120, 300], angle: [deg - 50, deg + 50], life: 350 });
   }
 
-  /** Jagged lightning / beam between two world points. */
+  /** Jagged lightning between two world points: branching, 3-frame flicker, glow. */
   bolt(x1: number, y1: number, x2: number, y2: number, o: { element?: Element; width?: number; ms?: number; jag?: number } = {}): void {
     const p = PALETTE[o.element ?? 'lightning'];
     const g = this.scene.add.graphics().setDepth(VFX_DEPTH + 2).setBlendMode(Phaser.BlendModes.ADD);
-    const n = Math.max(3, Math.round(Math.hypot(x2 - x1, y2 - y1) / 28));
-    const pts: { x: number; y: number }[] = [{ x: x1, y: y1 }];
-    const nx = -(y2 - y1), ny = x2 - x1, nl = Math.hypot(nx, ny) || 1;
-    const jag = o.jag ?? 16;
-    for (let i = 1; i < n; i++) {
-      const t = i / n, off = (Math.random() - 0.5) * 2 * jag;
-      pts.push({ x: x1 + (x2 - x1) * t + (nx / nl) * off, y: y1 + (y2 - y1) * t + (ny / nl) * off });
-    }
-    pts.push({ x: x2, y: y2 });
-    const w = o.width ?? 4;
-    const passes: [number, number, number][] = [[w * 3.5, p.mid, 0.25], [w * 1.8, p.mid, 0.6], [w * 0.8, p.core, 1]];
-    for (const [lw, col, a] of passes) {
-      g.lineStyle(lw, col, a);
-      g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-      g.strokePath();
-    }
-    this.emit('sparks', x2, y2, 5, { tint: p.core, scale: 0.14, speed: [60, 200], life: 350 });
-    this.scene.tweens.add({ targets: g, alpha: 0, duration: o.ms ?? 200, onComplete: () => g.destroy() });
+    const w = o.width ?? 4, jag = o.jag ?? 18;
+    const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+    const ux = (x2 - x1) / len, uy = (y2 - y1) / len, nx = -uy, ny = ux;
+    type Pt = { x: number; y: number };
+    const gen = () => {
+      const n = Math.max(4, Math.round(len / 22));
+      const main: Pt[] = [{ x: x1, y: y1 }];
+      for (let i = 1; i < n; i++) {
+        const t = i / n, off = (Math.random() - 0.5) * 2 * jag * Math.min(1, Math.sin(t * Math.PI) * 1.6);
+        main.push({ x: x1 + ux * len * t + nx * off, y: y1 + uy * len * t + ny * off });
+      }
+      main.push({ x: x2, y: y2 });
+      const branches: Pt[][] = [];
+      for (let i = 2; i < main.length - 2; i++) {
+        if (Math.random() > 0.3) continue;
+        const dir = (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.7);
+        const ca = Math.cos(dir), sa = Math.sin(dir);
+        const bx = ux * ca - uy * sa, by = ux * sa + uy * ca;
+        const br: Pt[] = [main[i]];
+        const segs = 2 + ((Math.random() * 3) | 0);
+        for (let k = 1; k <= segs; k++) br.push({ x: main[i].x + bx * 22 * k + (Math.random() - 0.5) * 10, y: main[i].y + by * 22 * k + (Math.random() - 0.5) * 10 });
+        branches.push(br);
+      }
+      return { main, branches };
+    };
+    const stroke = (pts: Pt[], wm: number, a: number) => {
+      const passes: [number, number, number][] = [[w * 3.5 * wm, p.mid, 0.22 * a], [w * 1.8 * wm, p.mid, 0.6 * a], [w * 0.8 * wm, p.core, a]];
+      for (const [lw, col, al] of passes) {
+        g.lineStyle(lw, col, al); g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+        g.strokePath();
+      }
+    };
+    const draw = () => { const b = gen(); g.clear(); stroke(b.main, 1, 1); for (const br of b.branches) stroke(br, 0.55, 0.85); };
+    draw();
+    this.emit('core', x2, y2, 1, { tint: p.core, scale: 0.7, scaleEnd: 0.1, life: 200 });
+    this.emit('glow', x2, y2, 1, { tint: p.mid, scale: 1.1, scaleEnd: 0.3, life: 300, alpha: 0.7 });
+    this.emit('sparks', x2, y2, 6, { tint: p.core, scale: 0.14, speed: [60, 240], life: 350 });
+    const fr = 45;
+    this.scene.time.addEvent({ delay: fr, repeat: 1, callback: () => { if (g.active) draw(); } });
+    this.scene.tweens.add({ targets: g, alpha: 0, delay: fr * 3, duration: o.ms ?? 160, onComplete: () => g.destroy() });
   }
 
   /** Persistent aura around an entity (champions, buffs). Returns a handle with destroy(). */
@@ -421,22 +450,8 @@ export class VfxManager {
     });
   }
 
-  /** Pooled floating damage number with a pop animation. */
-  damageNumber(text: string, x: number, y: number, o: { color?: string; crit?: boolean; small?: boolean } = {}): void {
-    if (this.activeTexts >= MAX_TEXTS) return;
-    let t = this.texts.pop();
-    const size = o.crit ? 30 : o.small ? 14 : 20;
-    if (!t) {
-      t = this.scene.add.text(0, 0, '', { fontFamily: 'Georgia, serif', fontStyle: 'bold', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5, 1).setDepth(VFX_DEPTH + 20);
-    }
-    const tx = x + (Math.random() - 0.5) * 24;
-    t.setText(text).setColor(o.color ?? '#ffffff').setFontSize(size).setPosition(tx, y).setAlpha(1).setVisible(true).setScale(o.crit ? 0.4 : 0.7);
-    this.activeTexts++;
-    const tt = t;
-    this.scene.tweens.add({ targets: tt, scale: o.crit ? 1.35 : 1, duration: 110, ease: 'Back.easeOut' });
-    this.scene.tweens.add({
-      targets: tt, y: y - (o.crit ? 70 : 46), alpha: 0, duration: o.crit ? 1100 : 800, delay: 120, ease: 'Cubic.easeOut',
-      onComplete: () => { tt.setVisible(false); this.activeTexts--; this.texts.push(tt); },
-    });
+  /** Pooled RO-style floating number (see CombatFx.number). */
+  damageNumber(text: string, x: number, y: number, o: { color?: string; crit?: boolean; small?: boolean; kind?: 'dmg' | 'crit' | 'player' | 'miss' | 'heal' | 'dot' } = {}): void {
+    this.fx.number(text, x, y, o);
   }
 }
